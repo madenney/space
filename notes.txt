@@ -1,0 +1,30 @@
+### Notes for Falling Rock Simulation
+
+#### Overview
+Simulates a 0.5m box falling 4m onto a fixed ground using Project Chrono and Irrlicht, saving frames for a 2-second video.
+
+#### Workflow
+1. **Setup**:
+   - Anaconda env `(chrono)` with Python 3.9 and `pychrono` required.
+   - Script: `index.py`.
+
+2. **Run Simulation**:
+   ```bash
+   conda activate chrono
+   python3 index.py
+   ```
+   - Creates `output/` with ~200 BMP frames.
+
+3. **Make Video**:
+   ```bash
+   ffmpeg -framerate 100 -i output/frame_%04d.bmp -c:v libx264 -pix_fmt yuv420p rock_fall.mp4
+   ```
+   - Outputs `rock_fall.mp4`.
+
+#### Troubleshooting
+- `ModuleNotFoundError`: Run `conda activate chrono` first—script will remind you.
+
+#### Tweaks
+- Gravity: Line 10, `sys.Set_G_acc`.
+- Rock: Line 23, `rock = chrono.ChBodyEasyBox`.
+- Camera: Line 30, `vis.AddCamera`.
