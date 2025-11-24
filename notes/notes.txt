@@ -1,0 +1,34 @@
+### Pipeline overview
+- One command runs everything: `conda activate chrono` then `python3 index.py`.
+- Each run creates a numbered folder inside `output/` (`output1`, `output2`, ...). All artifacts land there: `frame_data/` (NumPy + Alembic), `rendered_frames/` (PNG), logs (`run.log`, `blender.log`), and the generated Blender driver script (`blender_stage.py`).
+- Chrono sim runs headless for 2 seconds at 60 FPS, drops a 0.5 m cube onto a ground plane, records pose data to `motion_data.npy`. Random initial linear/angular velocity; set `SIM_SEED` to make it deterministic.
+- Blender stage (headless) remaps Chrono’s Y-up to Blender’s Z-up, rebuilds the animation, exports `motion_data.abc`, and renders frames with Cycles. Tries GPU (CUDA/OptiX/HIP/Metal), otherwise falls back to CPU.
+- Blender binary is auto-detected (`BLENDER_BIN`, then bundled `blender-4.2.0-linux-x64/blender`, then `blender-3.2.0-linux-x64/blender`, then system `blender`).
+
+### Quick steps
+1) `conda activate chrono`
+2) `python3 index.py`
+3) Outputs: `output/outputN/rendered_frames/frame_####.png` and `output/outputN/frame_data/motion_data.{npy,abc}`.
+
+### Notes
+- Old/legacy helper scripts and logs were moved into `old/`.
+- Ground, camera, and animation are now axis-consistent between Chrono (Y-up) and Blender (Z-up).
+- Customize duration/frames per second via config (`config.py` defaults or a JSON passed with `-c`).
+
+
+
+did you get stuck? reposting:
+
+alrighty, big change,
+
+I ant you to strip down index to make it jus tthe place shwere sc ripts are imported and called
+
+move the physics generation step to its own file
+
+move th eblender animation script to its own file
+
+move the config vars to their own file
+
+I wanna clean this up, make it more modular, make the index look cleaner
+
+move logger to its own file too
