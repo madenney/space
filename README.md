@@ -1,9 +1,10 @@
 ## Pipeline overview
-- One command runs the full pipeline: `conda activate chrono` then `python3 index.py`.
+- One command runs the full pipeline: `conda activate chrono` then `python3 run.py`.
 - The script simulates in Project Chrono, exports pose data for multiple bodies, feeds Blender headless to rebuild the animation, writes an Alembic cache, and renders PNG frames (and an MP4 if ffmpeg is present).
 - Each run is isolated in a new numbered folder inside `output/` (`output1`, `output2`, …) so runs do not overwrite each other.
+- You can resume rendering an existing run with `python3 run.py -r output/outputN` or stitch only the already-rendered frames into an MP4 with `python3 run.py -s output/outputN`.
 
-## What happens in `index.py`
+## What happens in `run.py`
 1) **Run folder**: Creates `output/outputN/` (incrementing the highest existing). Saves the resolved config to `config_used.json` and sets up logging to `run.log`.
 2) **Chrono sim**:
    - Initializes gravity (Y-up) and a ground plane.
@@ -36,7 +37,7 @@ Note: older runs used a `frame_images/` folder; the current pipeline does not ge
 ```
 
 ## Config knobs
-- Defaults live in `config.py` (`DEFAULT_CONFIG`). Per-run overrides: `python index.py -c my_config.json`.
+- Defaults live in `config.py` (`DEFAULT_CONFIG`). Per-run overrides: `python run.py -c my_config.json`.
 - Resolved config is saved per run to `config_used.json` in the output folder for audit/reuse.
 - `SIM_SEED`: set for deterministic initial velocities.
 - `BLENDER_BIN`: override Blender binary path.
@@ -49,5 +50,5 @@ Note: older runs used a `frame_images/` folder; the current pipeline does not ge
 
 ## Notes
 - Axis remap is applied (Chrono Y-up → Blender Z-up) for both position and quaternion.
-- Legacy/old helper scripts and logs live in `old/`; the pipeline now runs entirely from `index.py`.
+- Legacy/old helper scripts and logs live in `old/`; the pipeline now runs entirely from `run.py`.
 - Visual tweaks: sky lighting, warmer rock with noise/bump, muted ground, Filmic color management.

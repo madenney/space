@@ -23,7 +23,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "box": {"min": (0.3, 0.3, 0.3), "max": (0.8, 0.8, 0.8)},
         "cylinder": {"radius_min": 0.3, "radius_max": 0.5, "height_min": 0.2, "height_max": 0.9},
     },
-    "gravity_const": 0.0005,
+    "gravity_const": 0.0001,
     "body_density": 1000.0,
     "spawn_sphere_radius": 5.0,
     "spawn_lin_vel_range": (-3, 3),
@@ -31,6 +31,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "camera_radius": 40.0,
     "light_configs": [
         {"type": "POINT", "pos": (2, -2, 12), "energy": 200},
+        {"type": "POINT", "pos": (2, -2, -12), "energy": 200},
+        {"type": "POINT", "pos": (12, -12, 12), "energy": 200},
     ],
     "obstacle_configs": [],
     "obstacle_color": (0.2, 0.22, 0.26),

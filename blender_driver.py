@@ -212,6 +212,7 @@ for idx, body_def in enumerate(metadata["bodies"]):
 scene = bpy.context.scene
 scene.frame_start = frame_start
 scene.frame_end = frame_end
+scene.render.fps = frame_rate
 
 # Export Alembic (animated objects only)
 for obj in anim_objects:
@@ -236,6 +237,7 @@ clear_scene()
 scene = bpy.context.scene
 scene.frame_start = frame_start
 scene.frame_end = frame_end
+scene.render.fps = frame_rate
 scene.unit_settings.scale_length = 1.0
 bpy.ops.wm.alembic_import(filepath=str(abc_path), as_background_job=False, scale=1.0)
 
@@ -393,6 +395,15 @@ else:
     print(f"Rendering frames to {{render_dir}}", flush=True)
     bpy.ops.render.render(animation=True)
     print("Render complete.", flush=True)
+    # Fallback: ensure first/most-recent copies are written to the output root.
+    if render_dir.exists():
+        frames = sorted(render_dir.glob("frame_*.png"))
+        if frames:
+            dest_first = base_output / "first_frame.png"
+            dest_recent = base_output / "most_recent_frame.png"
+            shutil.copyfile(frames[0], dest_first)
+            shutil.copyfile(frames[-1], dest_recent)
+            print(f"Synced first/most-recent frames to {{base_output}}", flush=True)
 """
     )
     return script_path

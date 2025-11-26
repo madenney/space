@@ -1,5 +1,5 @@
 ### Pipeline overview
-- One command runs everything: `conda activate chrono` then `python3 index.py`.
+- One command runs everything: `conda activate chrono` then `python3 run.py`.
 - Each run creates a numbered folder inside `output/` (`output1`, `output2`, ...). All artifacts land there: `frame_data/` (NumPy + Alembic), `rendered_frames/` (PNG), logs (`run.log`, `blender.log`), and the generated Blender driver script (`blender_stage.py`).
 - Chrono sim runs headless for 2 seconds at 60 FPS, drops a 0.5 m cube onto a ground plane, records pose data to `motion_data.npy`. Random initial linear/angular velocity; set `SIM_SEED` to make it deterministic.
 - Blender stage (headless) remaps Chrono’s Y-up to Blender’s Z-up, rebuilds the animation, exports `motion_data.abc`, and renders frames with Cycles. Tries GPU (CUDA/OptiX/HIP/Metal), otherwise falls back to CPU.
@@ -7,7 +7,7 @@
 
 ### Quick steps
 1) `conda activate chrono`
-2) `python3 index.py`
+2) `python3 run.py`
 3) Outputs: `output/outputN/rendered_frames/frame_####.png` and `output/outputN/frame_data/motion_data.{npy,abc}`.
 
 ### Notes

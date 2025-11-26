@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 
-def setup_logger(run_dir: Path) -> logging.Logger:
+def setup_logger(run_dir: Path, to_file: bool = True) -> logging.Logger:
     logger = logging.getLogger("pipeline")
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
@@ -15,15 +15,16 @@ def setup_logger(run_dir: Path) -> logging.Logger:
 
     file_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     stream_fmt = logging.Formatter("%(message)s")
-    file_handler = logging.FileHandler(run_dir / "run.log")
-    file_handler.setFormatter(file_fmt)
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(stream_fmt)
     filt = _NoEmpty()
     logger.addFilter(filt)
-    file_handler.addFilter(filt)
     stream_handler.addFilter(filt)
-    logger.addHandler(file_handler)
+    if to_file:
+        file_handler = logging.FileHandler(run_dir / "run.log")
+        file_handler.setFormatter(file_fmt)
+        file_handler.addFilter(filt)
+        logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
     return logger
 
