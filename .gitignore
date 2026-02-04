@@ -1,7 +1,33 @@
-tools
+# Python
+__pycache__/
+*.pyc
+*.pyo
 
-output
+# Blender binary (download separately)
+blender-*/
+*.tar.xz
 
+# Build artifacts
+build/
+
+# Output data
+output/
+
+# Queue state
+queue/
+
+# Legacy/archived
+old/
+
+# Tools
+tools/
+
+# Videos
 *.mp4
 
-queue
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
