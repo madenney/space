@@ -7,6 +7,9 @@
 
 ### Quick steps
 1) `conda activate chrono`
+2) If `pychrono` is missing, add the local build to your env:
+   `export PYTHONPATH=/home/matt/Projects/space/chrono/build/bin:$PYTHONPATH`
+   `export LD_LIBRARY_PATH=/home/matt/Projects/space/chrono/build/lib:$LD_LIBRARY_PATH`
 2) `python3 run.py`
 3) Outputs: `output/outputN/rendered_frames/frame_####.png` and `output/outputN/frame_data/motion_data.{npy,abc}`.
 
@@ -17,18 +20,10 @@
 
 
 
-did you get stuck? reposting:
 
-alrighty, big change,
 
-I ant you to strip down index to make it jus tthe place shwere sc ripts are imported and called
 
-move the physics generation step to its own file
 
-move th eblender animation script to its own file
 
-move the config vars to their own file
-
-I wanna clean this up, make it more modular, make the index look cleaner
-
-move logger to its own file too
+references:
+https://www.youtube.com/shorts/ypeZdqaHKTo

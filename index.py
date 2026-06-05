@@ -167,30 +167,36 @@ def watch_log(log_path: Path) -> None:
     try:
         with log_path.open("r") as fh:
             cur = ""
+            display_line = ""
+            max_len = 0
+
+            def render() -> None:
+                nonlocal max_len
+                max_len = max(max_len, len(display_line))
+                pad = " " * (max_len - len(display_line))
+                sys.stdout.write("\r" + display_line + pad)
+                sys.stdout.flush()
+
             def process_chunk(chunk: str) -> None:
-                nonlocal cur
+                nonlocal cur, display_line
+                updated = False
                 for ch in chunk:
-                    if ch == "\r":
-                        # carriage return: overwrite current line
+                    if ch in ("\r", "\n"):
+                        display_line = cur
                         cur = ""
-                        sys.stdout.write("\r")
-                        sys.stdout.flush()
-                    elif ch == "\n":
-                        sys.stdout.write(cur + "\n")
-                        sys.stdout.flush()
-                        cur = ""
+                        updated = True
                     else:
                         cur += ch
                 if cur:
-                    sys.stdout.write("\r" + cur)
-                    sys.stdout.flush()
+                    display_line = cur
+                    updated = True
+                if updated:
+                    render()
 
-            # Print everything currently in the log once, honoring carriage returns
             existing = fh.read()
             if existing:
                 process_chunk(existing)
 
-            # Follow new content
             while True:
                 chunk = fh.read(1024)
                 if chunk:
@@ -283,33 +289,56 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     if argv and argv[0] == "a":
         argv[0] = "add"
 
-    parser = argparse.ArgumentParser(description="Simple queue runner for run.py", allow_abbrev=False)
+    parser = argparse.ArgumentParser(
+        description="Simple queue runner for run.py",
+        allow_abbrev=False,
+        add_help=False,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     add_p = sub.add_parser(
         "add",
         help="Add a job to the queue",
         allow_abbrev=False,
+        add_help=False,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     add_p.add_argument("--name", help="Optional name/label for the job")
 
-    sub.add_parser("status", help="Show job statuses", allow_abbrev=False)
-    sub.add_parser("m", help="Open most recent frame", allow_abbrev=False)
-    sub.add_parser("p", help="Play most recent mp4", allow_abbrev=False)
-    sub.add_parser("o", help="Open output folder", allow_abbrev=False)
-    l_p = sub.add_parser("l", help="Queue a job using the last run's settings", allow_abbrev=False)
+    sub.add_parser("status", help="Show job statuses", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    sub.add_parser("m", help="Open most recent frame", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    sub.add_parser("p", help="Play most recent mp4", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    sub.add_parser("o", help="Open output folder", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    l_p = sub.add_parser("l", help="Queue a job using the last run's settings", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     l_p.add_argument(
         "override_args",
         nargs=argparse.REMAINDER,
         help="Optional args to override last settings (e.g. -q high -n 50; use -- to stop parsing if needed)",
     )
-    sub.add_parser("w", help="Watch latest run log (live)", allow_abbrev=False)
+    sub.add_parser("w", help="Watch latest run log (live)", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    sub.add_parser("k", help="Kill all running workers and clear pending", allow_abbrev=False)
+    sub.add_parser("k", help="Kill all running workers and clear pending", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    worker_p = sub.add_parser("worker", help=argparse.SUPPRESS, allow_abbrev=False)
+    worker_p = sub.add_parser("worker", help=argparse.SUPPRESS, allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     worker_p.add_argument("--loop", action="store_true", help=argparse.SUPPRESS)
     worker_p.add_argument("--poll-interval", type=int, default=10, help=argparse.SUPPRESS)
+
+    if "-h" in argv or "--help" in argv:
+        index_help = parser.format_help().rstrip()
+        try:
+            run_help = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "run.py"), "-h"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+        except Exception as exc:
+            run_help = f"(Failed to load run.py help: {exc})"
+        print(index_help)
+        print("\nrun.py options:\n")
+        print(run_help)
+        raise SystemExit(0)
 
     cmd = argv[0]
     if cmd == "add":
@@ -325,12 +354,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 def main(argv: List[str]) -> None:
     # Fast-path for w to avoid argparse quirks in weird shells.
     if argv and argv[0] == "w":
-        print("w hit: locating log...", flush=True)
         log_path = latest_log()
         if log_path is None:
             print(f"No logs found. Searched in {LOG_DIR} and {OUTPUT_ROOT}/output*/run.log")
             return
-        print(f"w streaming: {log_path}", flush=True)
         watch_log(log_path)
         return
 
