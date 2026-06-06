@@ -5,10 +5,10 @@ function fmtDate(ts) {
   return new Date(ts * 1000).toLocaleString();
 }
 
-function RunCard({ run, onOpen }) {
+function RunCard({ run, onOpen, onUseSettings }) {
   const rendered = run.frames_rendered > 0;
   return (
-    <button className="card" onClick={() => onOpen(run.id)}>
+    <div className="card" onClick={() => onOpen(run.id)} role="button" tabIndex={0}>
       <div className="thumb">
         {rendered ? (
           <img src={thumbUrl(run.id)} alt={`run ${run.id} thumbnail`} loading="lazy" />
@@ -16,6 +16,16 @@ function RunCard({ run, onOpen }) {
           <div className="thumb-empty">no frames</div>
         )}
         {run.has_video && <span className="badge video">▶ mp4</span>}
+        <button
+          className="badge use-badge"
+          title="use these settings for a new render"
+          onClick={(e) => {
+            e.stopPropagation();
+            onUseSettings(run.id);
+          }}
+        >
+          ⎘ use
+        </button>
       </div>
       <div className="card-body">
         <div className="card-title">
@@ -31,17 +41,17 @@ function RunCard({ run, onOpen }) {
         </div>
         <div className="card-date">{fmtDate(run.modified_at)}</div>
       </div>
-    </button>
+    </div>
   );
 }
 
-export default function RunGallery({ runs, loading, onOpen }) {
+export default function RunGallery({ runs, loading, onOpen, onUseSettings }) {
   if (loading) return <div className="empty">loading runs…</div>;
   if (!runs.length) return <div className="empty">no runs in output/ yet</div>;
   return (
     <div className="gallery">
       {runs.map((run) => (
-        <RunCard key={run.id} run={run} onOpen={onOpen} />
+        <RunCard key={run.id} run={run} onOpen={onOpen} onUseSettings={onUseSettings} />
       ))}
     </div>
   );

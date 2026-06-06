@@ -8,6 +8,11 @@ Run with:
 """
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -16,6 +21,7 @@ from typing import Any, Dict, Optional
 
 import runs
 import jobmanager
+import presets
 from config import DEFAULT_CONFIG
 
 app = FastAPI(title="Sim/Render Pipeline API", version="0.1.0")
@@ -55,6 +61,9 @@ class JobRequest(BaseModel):
     first_frame: bool = False
     config_override: Optional[Dict[str, Any]] = None
     name: Optional[str] = None
+    prep_scene: bool = False              # -p: build an editable .blend, skip render
+    resume_run_id: Optional[int] = None   # -r: render into an existing run
+    blender_scene: Optional[str] = None   # -b: render from a .blend
 
 
 @app.post("/api/jobs")
@@ -86,6 +95,81 @@ def job_logs(job_id: int):
     )
 
 
+# ---- Presets --------------------------------------------------------------
+
+class PresetRequest(BaseModel):
+    name: str
+    quality: Optional[str] = None
+    num_bodies: Optional[int] = None
+    seconds: Optional[float] = None
+    first_frame: bool = False
+    config_override: Optional[Dict[str, Any]] = None
+
+
+@app.get("/api/presets")
+def get_presets() -> list:
+    return presets.list_presets()
+
+
+@app.post("/api/presets")
+def save_preset(req: PresetRequest) -> dict:
+    return presets.save_preset(req.model_dump())
+
+
+@app.delete("/api/presets/{name}")
+def delete_preset(name: str) -> dict:
+    if not presets.delete_preset(name):
+        raise HTTPException(status_code=404, detail=f"preset {name} not found")
+    return {"deleted": name}
+
+
+# ---- Blender (native scene editing) ---------------------------------------
+
+def _resolve_blender() -> Optional[str]:
+    for cand in DEFAULT_CONFIG.get("blender_candidates", []):
+        if not cand:
+            continue
+        p = Path(cand)
+        if p.is_absolute() and p.exists():
+            return str(p)
+        # relative to project root, or on PATH
+        rel = runs.OUTPUT_ROOT.parent / cand
+        if rel.exists():
+            return str(rel)
+        found = shutil.which(cand)
+        if found:
+            return found
+    return None
+
+
+class OpenSceneRequest(BaseModel):
+    run_id: int
+
+
+@app.post("/api/blender/open")
+def open_scene(req: OpenSceneRequest) -> dict:
+    """Launch the Blender GUI on a run's editable scene (local desktop only)."""
+    scene = runs.run_dir_for(req.run_id) / "scene_edit.blend"
+    if not scene.exists():
+        raise HTTPException(status_code=404, detail="scene_edit.blend not found for this run")
+    blender = _resolve_blender()
+    if not blender:
+        raise HTTPException(status_code=500, detail="Blender binary not found")
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        raise HTTPException(status_code=409, detail="No display available to open Blender (headless host)")
+    try:
+        subprocess.Popen(
+            [blender, str(scene)],
+            cwd=str(runs.OUTPUT_ROOT.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to launch Blender: {exc}")
+    return {"opened": str(scene)}
+
+
 @app.get("/api/runs")
 def get_runs() -> list:
     return runs.list_runs()
@@ -97,6 +181,15 @@ def get_run(run_id: int) -> dict:
     if detail is None:
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
     return detail
+
+
+@app.get("/api/runs/{run_id}/spec")
+def get_run_spec(run_id: int) -> dict:
+    """Settings derived from a run, to seed a new job in the builder."""
+    spec = runs.run_spec(run_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    return spec
 
 
 @app.get("/api/runs/{run_id}/frames/{index}")

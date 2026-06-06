@@ -92,6 +92,48 @@ def list_runs() -> List[Dict[str, Any]]:
     return runs
 
 
+def _norm(value: Any) -> str:
+    try:
+        return json.dumps(value, sort_keys=True)
+    except Exception:
+        return str(value)
+
+
+# Resolved-config keys that aren't portable sim/look settings (paths, the
+# preset table, and fields already captured as quality/bodies/seconds).
+_SPEC_DENYLIST = {
+    "output_root",
+    "blender_candidates",
+    "quality_presets",
+    "default_quality",
+    "default_body_count",
+    "duration_seconds",
+}
+
+
+def run_spec(run_id: int) -> Optional[Dict[str, Any]]:
+    """Turn a finished run into a job-builder spec (settings to clone)."""
+    run_dir = run_dir_for(run_id)
+    if not run_dir.is_dir():
+        return None
+    meta = _read_json(run_dir / "run_metadata.json")
+    cfg = _read_json(run_dir / "config_used.json")
+    # config_override = what differed from the defaults at run time.
+    override: Dict[str, Any] = {}
+    for key, val in cfg.items():
+        if key in _SPEC_DENYLIST:
+            continue
+        if key not in DEFAULT_CONFIG or _norm(val) != _norm(DEFAULT_CONFIG[key]):
+            override[key] = val
+    return {
+        "quality": meta.get("quality"),
+        "num_bodies": meta.get("body_count"),
+        "seconds": meta.get("duration_seconds"),
+        "first_frame": False,
+        "config_override": override or None,
+    }
+
+
 def run_detail(run_id: int) -> Optional[Dict[str, Any]]:
     run_dir = run_dir_for(run_id)
     if not run_dir.is_dir():

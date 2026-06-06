@@ -13,6 +13,12 @@ export async function fetchRun(id) {
   return res.json();
 }
 
+export async function fetchRunSpec(id) {
+  const res = await fetch(`/api/runs/${id}/spec`);
+  if (!res.ok) throw new Error(`GET /api/runs/${id}/spec -> ${res.status}`);
+  return res.json();
+}
+
 export const thumbUrl = (id) => `/api/runs/${id}/thumb`;
 export const frameUrl = (id, index) => `/api/runs/${id}/frames/${index}`;
 export const videoUrl = (id) => `/api/runs/${id}/video`;
@@ -39,4 +45,41 @@ export async function fetchJobs() {
   return res.json();
 }
 
+export async function openInBlender(run_id) {
+  const res = await fetch("/api/blender/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `open failed -> ${res.status}`);
+  }
+  return res.json();
+}
+
 export const jobLogUrl = (id) => `/api/jobs/${id}/logs`;
+
+export async function fetchPresets() {
+  const res = await fetch("/api/presets");
+  if (!res.ok) throw new Error(`GET /api/presets -> ${res.status}`);
+  return res.json();
+}
+
+export async function savePreset(payload) {
+  const res = await fetch("/api/presets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`POST /api/presets -> ${res.status}`);
+  return res.json();
+}
+
+export async function deletePreset(name) {
+  const res = await fetch(`/api/presets/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`DELETE /api/presets/${name} -> ${res.status}`);
+  return res.json();
+}

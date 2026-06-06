@@ -96,6 +96,17 @@ main { padding: 20px; }
   padding: 2px 8px;
   font-size: 11px;
 }
+.use-badge {
+  left: 8px;
+  right: auto;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.card:hover .use-badge { opacity: 1; }
+.use-badge:hover { border-color: var(--accent); color: var(--accent); }
+.use-settings { margin-left: auto; }
 .card-body { padding: 10px 12px 12px; }
 .card-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .run-name { font-weight: 600; }
@@ -210,6 +221,12 @@ kbd, .keyhint { font-size: 11px; }
 .builder label.checkbox { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 .builder label.checkbox input { width: auto; }
 .preset-info { color: var(--muted); font-size: 11px; margin-top: -6px; }
+.override-info { color: #8fd6a0; font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.notice { color: #8fd6a0; font-size: 12px; }
+.save-preset { display: flex; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
+.save-preset input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.save-preset .ghost { white-space: nowrap; }
+.job-actions { display: flex; gap: 12px; align-items: center; margin-top: 2px; }
 
 button.primary {
   background: var(--accent);
@@ -221,6 +238,32 @@ button.primary {
   cursor: pointer;
 }
 button.primary:disabled { opacity: 0.5; cursor: default; }
+
+button.secondary {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.secondary:hover { border-color: var(--accent); }
+button.secondary:disabled { opacity: 0.5; cursor: default; }
+.prep-help { color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+.scene-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+}
+.scene-label { color: #8fd6a0; font-size: 12px; font-weight: 600; }
+.scene-actions { display: flex; gap: 14px; margin: 4px 0; align-items: center; }
+.scene-path { color: var(--muted); font-size: 10px; word-break: break-all; }
+.scene-q { margin-left: auto; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.scene-q select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font-size: 11px; }
 
 /* Jobs list */
 .jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

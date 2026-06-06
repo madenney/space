@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchRuns } from "./api.js";
+import { fetchRuns, fetchRunSpec } from "./api.js";
 import RunGallery from "./components/RunGallery.jsx";
 import RunDetail from "./components/RunDetail.jsx";
 import JobBuilder from "./components/JobBuilder.jsx";
@@ -22,6 +22,10 @@ export default function App() {
     return m ? Number(m[1]) : null;
   });
   const [jobsRefresh, setJobsRefresh] = useState(0);
+
+  // Settings cloned into the builder from a previous job/run.
+  const [builderSeed, setBuilderSeed] = useState(null);
+  const [seedNonce, setSeedNonce] = useState(0);
 
   async function loadRuns() {
     setLoading(true);
@@ -48,6 +52,22 @@ export default function App() {
   function onJobSubmitted(job) {
     setActiveJob(job.id);
     setJobsRefresh((n) => n + 1);
+  }
+
+  // Clone settings into the builder, then jump to the render view.
+  function useSettings(spec) {
+    setBuilderSeed(spec);
+    setSeedNonce((n) => n + 1);
+    setSelectedRun(null);
+    setView("render");
+  }
+
+  async function useRunSettings(id) {
+    try {
+      useSettings(await fetchRunSpec(id));
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
   return (
@@ -83,20 +103,35 @@ export default function App() {
       <main>
         {view === "gallery" &&
           (selectedRun == null ? (
-            <RunGallery runs={runs} loading={loading} onOpen={(id) => setSelectedRun(id)} />
+            <RunGallery
+              runs={runs}
+              loading={loading}
+              onOpen={(id) => setSelectedRun(id)}
+              onUseSettings={useRunSettings}
+            />
           ) : (
-            <RunDetail id={selectedRun} onBack={() => setSelectedRun(null)} />
+            <RunDetail
+              id={selectedRun}
+              onBack={() => setSelectedRun(null)}
+              onUseSettings={() => useRunSettings(selectedRun)}
+            />
           ))}
 
         {view === "render" && (
           <div className="render-view">
             <div className="render-left">
-              <JobBuilder onSubmitted={onJobSubmitted} />
+              <JobBuilder
+                onSubmitted={onJobSubmitted}
+                seed={builderSeed}
+                seedNonce={seedNonce}
+              />
               <h4 className="section">jobs</h4>
               <JobsPanel
                 activeId={activeJob}
                 onSelect={setActiveJob}
                 onOpenRun={openRun}
+                onRerun={onJobSubmitted}
+                onClone={useSettings}
                 refreshKey={jobsRefresh}
               />
             </div>

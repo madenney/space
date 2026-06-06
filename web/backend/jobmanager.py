@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import runs
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 JOBS_DIR = Path(__file__).resolve().parent / ".jobs"
 JOBS_FILE = JOBS_DIR / "jobs.json"
@@ -66,12 +68,21 @@ def _next_id() -> int:
 def build_args(req: Dict[str, Any]) -> List[str]:
     """Translate a job request into run.py CLI args."""
     args: List[str] = []
+    resume = req.get("resume_run_id")
+    if resume is not None:
+        # Render into an existing run (e.g. from an edited Blender scene); its
+        # physics/config are reused, so bodies/seconds don't apply.
+        args += ["-r", str(runs.run_dir_for(int(resume)))]
     if req.get("quality"):
         args += ["-q", str(req["quality"])]
-    if req.get("num_bodies") is not None:
+    if resume is None and req.get("num_bodies") is not None:
         args += ["-n", str(int(req["num_bodies"]))]
-    if req.get("seconds") is not None:
+    if resume is None and req.get("seconds") is not None:
         args += ["-t", str(float(req["seconds"]))]
+    if req.get("blender_scene"):
+        args += ["-b", str(req["blender_scene"])]
+    if req.get("prep_scene"):
+        args += ["-p"]
     if req.get("first_frame"):
         args += ["-f"]
     return args
@@ -96,7 +107,16 @@ def create_job(req: Dict[str, Any]) -> Dict[str, Any]:
             "id": job_id,
             "name": req.get("name") or f"job-{job_id}",
             "args": args,
+            # Original request, kept so the job can be re-run verbatim.
+            "request": {
+                k: req.get(k)
+                for k in (
+                    "quality", "num_bodies", "seconds", "first_frame", "config_override",
+                    "name", "prep_scene", "resume_run_id", "blender_scene",
+                )
+            },
             "status": "pending",
+            "scene_path": None,
             "created_at": _utc_now(),
             "started_at": None,
             "finished_at": None,
@@ -158,6 +178,13 @@ def _run(job_id: int, args: List[str]) -> None:
         if m:
             run_id = int(m.group(1))
 
+    # If this was a scene-prep job, surface the editable .blend it produced.
+    scene_path = None
+    if run_dir and _jobs[job_id]["request"].get("prep_scene"):
+        candidate = Path(run_dir) / "scene_edit.blend"
+        if candidate.exists():
+            scene_path = str(candidate)
+
     with _lock:
         _jobs[job_id].update(
             status="success" if rc == 0 else "failed",
@@ -165,6 +192,7 @@ def _run(job_id: int, args: List[str]) -> None:
             finished_at=_utc_now(),
             run_dir=run_dir,
             run_id=run_id,
+            scene_path=scene_path,
             error=None if rc == 0 else f"exited with code {rc}",
         )
         _persist()

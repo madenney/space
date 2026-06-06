@@ -10,7 +10,7 @@ function Stat({ label, value }) {
   );
 }
 
-export default function RunDetail({ id, onBack }) {
+export default function RunDetail({ id, onBack, onUseSettings }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
   const [frameIdx, setFrameIdx] = useState(0);
@@ -66,6 +66,9 @@ export default function RunDetail({ id, onBack }) {
         </button>
         <h2>{run.name}</h2>
         {run.quality && <span className={`pill q-${run.quality}`}>{run.quality}</span>}
+        <button className="ghost use-settings" onClick={onUseSettings}>
+          ⎘ use these settings for a new render
+        </button>
       </div>
 
       <div className="detail-grid">
