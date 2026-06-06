@@ -326,7 +326,12 @@ def main():
         frame_rate = chrono_result["metadata"].get("frame_rate", preset.get("fps", 30))
         chrono_result["metadata"]["quality"] = quality
         (run_dir / "run_metadata.json").write_text(json.dumps(chrono_result["metadata"], indent=2))
-        resume_frame = detect_resume_frame(run_dir, chrono_result["metadata"], logger)
+        # First-frame mode always (re)renders frame 0 — ignore the resume scan so
+        # a lighting test frame can be regenerated even when frames already exist.
+        if args.first_frame:
+            resume_frame = 0
+        else:
+            resume_frame = detect_resume_frame(run_dir, chrono_result["metadata"], logger)
         logger.info(
             "Resuming run directory: %s (quality=%s, duration=%.2fs, bodies=%d)",
             run_dir,
