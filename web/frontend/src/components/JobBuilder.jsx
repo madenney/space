@@ -6,9 +6,38 @@ const BLANK = {
   quality: "low",
   num_bodies: 5,
   seconds: 1,
+  gravity: "",  // gravity_const; filled from defaults on load
+  linMin: "",   // spawn_lin_vel_range magnitude bounds
+  linMax: "",
+  angMin: "",   // spawn_ang_vel_range magnitude bounds
+  angMax: "",
   first_frame: false,
   config_override: null,
 };
+
+// Physics uses |velocity| as a min→max band, so a [-15,15] range really means
+// "speed magnitude 15..15". Reduce a raw range to sorted magnitude bounds.
+function magBounds(arr) {
+  if (!arr || arr.length < 2) return null;
+  return arr.map((v) => Math.abs(v)).sort((a, b) => a - b);
+}
+
+function rangesEqual(a, b) {
+  return a && b && Number(a[0]) === Number(b[0]) && Number(a[1]) === Number(b[1]);
+}
+
+// Pull the fields we give dedicated inputs (gravity, the two speed ranges) out
+// of a config_override blob, leaving any other overrides in `rest`.
+function splitOverride(override) {
+  const o = { ...(override || {}) };
+  const gravity = o.gravity_const ?? null;
+  const lin = magBounds(o.spawn_lin_vel_range);
+  const ang = magBounds(o.spawn_ang_vel_range);
+  delete o.gravity_const;
+  delete o.spawn_lin_vel_range;
+  delete o.spawn_ang_vel_range;
+  return { gravity, lin, ang, rest: Object.keys(o).length ? o : null };
+}
 
 export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
   const [defaults, setDefaults] = useState(null);
@@ -29,11 +58,18 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         setDefaults(d);
         // Don't clobber a cloned-in seed with the plain defaults.
         if (seededRef.current) return;
+        const lin = magBounds(d.spawn_lin_vel_range);
+        const ang = magBounds(d.spawn_ang_vel_range);
         setForm((f) => ({
           ...f,
           quality: d.default_quality ?? f.quality,
           num_bodies: d.default_body_count ?? f.num_bodies,
           seconds: d.duration_seconds ?? f.seconds,
+          gravity: f.gravity === "" && d.gravity_const != null ? d.gravity_const : f.gravity,
+          linMin: f.linMin === "" && lin ? lin[0] : f.linMin,
+          linMax: f.linMax === "" && lin ? lin[1] : f.linMax,
+          angMin: f.angMin === "" && ang ? ang[0] : f.angMin,
+          angMax: f.angMax === "" && ang ? ang[1] : f.angMax,
         }));
       })
       .catch((e) => setError(e.message));
@@ -45,13 +81,19 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     if (!seed) return;
     seededRef.current = true;
     setSelectedPreset("");
+    const { gravity, lin, ang, rest } = splitOverride(seed.config_override);
     setForm((f) => ({
       ...f,
       quality: seed.quality ?? f.quality,
       num_bodies: seed.num_bodies ?? f.num_bodies,
       seconds: seed.seconds ?? f.seconds,
+      gravity: gravity != null ? gravity : f.gravity,
+      linMin: lin ? lin[0] : f.linMin,
+      linMax: lin ? lin[1] : f.linMax,
+      angMin: ang ? ang[0] : f.angMin,
+      angMax: ang ? ang[1] : f.angMax,
       first_frame: seed.first_frame ?? false,
-      config_override: seed.config_override ?? null,
+      config_override: rest,
       name: seed.name ? `${seed.name}-copy` : f.name,
     }));
     setNotice("loaded settings from a previous render — tweak and hit render");
@@ -68,14 +110,46 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     }
     const p = presets.find((x) => x.name === name);
     if (!p) return;
+    const { gravity, lin, ang, rest } = splitOverride(p.config_override);
     setForm((f) => ({
       ...f,
       quality: p.quality ?? f.quality,
       num_bodies: p.num_bodies ?? f.num_bodies,
       seconds: p.seconds ?? f.seconds,
+      gravity: gravity != null ? gravity : f.gravity,
+      linMin: lin ? lin[0] : f.linMin,
+      linMax: lin ? lin[1] : f.linMax,
+      angMin: ang ? ang[0] : f.angMin,
+      angMax: ang ? ang[1] : f.angMax,
       first_frame: p.first_frame ?? f.first_frame,
-      config_override: p.config_override ?? null,
+      config_override: rest,
     }));
+  }
+
+  // Fold the gravity field back into config_override. Only include it when it
+  // differs from the engine default, so an untouched value stays implicit.
+  function mergedOverride() {
+    const base = { ...(form.config_override || {}) };
+
+    const g = Number(form.gravity);
+    const dflt = defaults?.gravity_const;
+    if (form.gravity !== "" && !Number.isNaN(g) && g !== dflt) {
+      base.gravity_const = g;
+    }
+
+    // Speed ranges: send only when the user moved them off the defaults.
+    const addRange = (key, minV, maxV, defArr) => {
+      if (minV === "" || maxV === "") return;
+      const lo = Number(minV);
+      const hi = Number(maxV);
+      if (Number.isNaN(lo) || Number.isNaN(hi)) return;
+      const range = [lo, hi].sort((a, b) => a - b);
+      if (!rangesEqual(range, magBounds(defArr))) base[key] = range;
+    };
+    addRange("spawn_lin_vel_range", form.linMin, form.linMax, defaults?.spawn_lin_vel_range);
+    addRange("spawn_ang_vel_range", form.angMin, form.angMax, defaults?.spawn_ang_vel_range);
+
+    return Object.keys(base).length ? base : null;
   }
 
   function payload(extra) {
@@ -85,7 +159,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
       num_bodies: Number(form.num_bodies),
       seconds: Number(form.seconds),
       first_frame: form.first_frame,
-      config_override: form.config_override,
+      config_override: mergedOverride(),
       ...extra,
     };
   }
@@ -114,7 +188,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         num_bodies: Number(form.num_bodies),
         seconds: Number(form.seconds),
         first_frame: form.first_frame,
-        config_override: form.config_override,
+        config_override: mergedOverride(),
       });
       await loadPresets();
       setSelectedPreset(presetName.trim());
@@ -169,6 +243,48 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
       <label>
         bodies
         <input type="number" min={1} value={form.num_bodies} onChange={(e) => set("num_bodies", e.target.value)} />
+      </label>
+
+      <label>
+        gravity
+        <span className="hint">pairwise attraction between bodies (default {defaults?.gravity_const ?? "0.0005"})</span>
+        <input
+          type="number"
+          step={0.0001}
+          min={0}
+          value={form.gravity}
+          onChange={(e) => set("gravity", e.target.value)}
+        />
+      </label>
+
+      <label>
+        move speed <span className="hint">initial linear speed range (min → max)</span>
+        <div className="range-row">
+          <input
+            type="number" min={0} step={0.5}
+            value={form.linMin} onChange={(e) => set("linMin", e.target.value)}
+          />
+          <span className="range-sep">→</span>
+          <input
+            type="number" min={0} step={0.5}
+            value={form.linMax} onChange={(e) => set("linMax", e.target.value)}
+          />
+        </div>
+      </label>
+
+      <label>
+        spin speed <span className="hint">initial angular speed range (min → max)</span>
+        <div className="range-row">
+          <input
+            type="number" min={0} step={0.5}
+            value={form.angMin} onChange={(e) => set("angMin", e.target.value)}
+          />
+          <span className="range-sep">→</span>
+          <input
+            type="number" min={0} step={0.5}
+            value={form.angMax} onChange={(e) => set("angMax", e.target.value)}
+          />
+        </div>
       </label>
 
       <label>

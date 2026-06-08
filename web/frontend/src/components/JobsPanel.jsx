@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchJobs, createJob, openInBlender } from "../api.js";
+import { fetchJobs, createJob, openInBlender, cancelJob } from "../api.js";
 
 const QUALITIES = ["low", "high", "final"];
 
@@ -13,6 +13,18 @@ export default function JobsPanel({ activeId, onSelect, onOpenRun, onRerun, onCl
     e.stopPropagation();
     const fresh = await createJob(job.request || {});
     onRerun?.(fresh);
+  }
+
+  async function cancel(job, e) {
+    e.stopPropagation();
+    setMsg(null);
+    try {
+      await cancelJob(job.id);
+      setMsg(`cancelling #${job.id}…`);
+      fetchJobs().then(setJobs).catch(() => {});
+    } catch (err) {
+      setMsg(`couldn't cancel: ${err.message}`);
+    }
   }
 
   async function openBlender(job, e) {
@@ -83,6 +95,11 @@ export default function JobsPanel({ activeId, onSelect, onOpenRun, onRerun, onCl
             <code>{job.args.join(" ")}</code>
           </div>
           <div className="job-actions">
+            {(job.status === "running" || job.status === "pending") && (
+              <button className="link cancel" onClick={(e) => cancel(job, e)}>
+                ✕ cancel
+              </button>
+            )}
             <button className="link" onClick={(e) => rerun(job, e)}>
               ↻ re-run
             </button>

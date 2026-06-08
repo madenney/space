@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -33,6 +34,10 @@ _RUN_DIR_RE = re.compile(r"(?:New run directory|Resuming run directory|Reusing p
 
 _lock = threading.Lock()
 _jobs: Dict[int, Dict[str, Any]] = {}
+# Live process handles for running jobs, so they can be cancelled.
+_procs: Dict[int, subprocess.Popen] = {}
+# Job ids the user asked to cancel (distinguishes a kill from a real failure).
+_cancelled: set[int] = set()
 
 
 def _utc_now() -> str:
@@ -157,7 +162,12 @@ def _run(job_id: int, args: List[str]) -> None:
                 text=True,
                 bufsize=1,
                 env=env,
+                # Own session/process group so cancel can kill the whole tree
+                # (conda run -> python run.py -> blender), not just the wrapper.
+                start_new_session=True,
             )
+            with _lock:
+                _procs[job_id] = proc
             for line in proc.stdout:  # universal-newline: \r progress also yields lines
                 logf.write(line)
                 if run_dir is None:
@@ -167,7 +177,24 @@ def _run(job_id: int, args: List[str]) -> None:
             rc = proc.wait()
     except Exception as exc:  # spawn failure, etc.
         with _lock:
+            _procs.pop(job_id, None)
             _jobs[job_id].update(status="failed", error=str(exc), finished_at=_utc_now())
+            _persist()
+        return
+    finally:
+        with _lock:
+            _procs.pop(job_id, None)
+
+    if job_id in _cancelled:
+        _cancelled.discard(job_id)
+        with _lock:
+            _jobs[job_id].update(
+                status="cancelled",
+                returncode=rc,
+                finished_at=_utc_now(),
+                run_dir=run_dir,
+                error="cancelled by user",
+            )
             _persist()
         return
 
@@ -210,7 +237,39 @@ def get_job(job_id: int) -> Optional[Dict[str, Any]]:
 
 
 def is_terminal(status: str) -> bool:
-    return status in ("success", "failed", "interrupted")
+    return status in ("success", "failed", "interrupted", "cancelled")
+
+
+def cancel_job(job_id: int) -> Dict[str, Any]:
+    """Terminate a running job's whole process tree (conda -> python -> blender)."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if is_terminal(job["status"]):
+            return dict(job)
+        proc = _procs.get(job_id)
+        _cancelled.add(job_id)
+        if proc is None:
+            # Pending (thread not spawned proc yet) or already gone — mark cancelled.
+            job.update(status="cancelled", finished_at=_utc_now(), error="cancelled by user")
+            _persist()
+            return dict(job)
+
+    # Kill the process group; escalate to SIGKILL if it lingers.
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
+        for _ in range(20):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        if proc.poll() is None:
+            os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+    return get_job(job_id) or {}
 
 
 def tail_log(job_id: int):

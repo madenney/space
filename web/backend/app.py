@@ -84,6 +84,14 @@ def get_job(job_id: int) -> dict:
     return job
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: int) -> dict:
+    try:
+        return jobmanager.cancel_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+
+
 @app.get("/api/jobs/{job_id}/logs")
 def job_logs(job_id: int):
     if jobmanager.get_job(job_id) is None:

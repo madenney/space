@@ -5,6 +5,7 @@ import RunDetail from "./components/RunDetail.jsx";
 import JobBuilder from "./components/JobBuilder.jsx";
 import JobsPanel from "./components/JobsPanel.jsx";
 import LogConsole from "./components/LogConsole.jsx";
+import HotkeysModal from "./components/HotkeysModal.jsx";
 
 export default function App() {
   // Hash deep-links: #render or #render/<jobId>
@@ -22,6 +23,7 @@ export default function App() {
     return m ? Number(m[1]) : null;
   });
   const [jobsRefresh, setJobsRefresh] = useState(0);
+  const [showHotkeys, setShowHotkeys] = useState(false);
 
   // Settings cloned into the builder from a previous job/run.
   const [builderSeed, setBuilderSeed] = useState(null);
@@ -91,12 +93,17 @@ export default function App() {
           </button>
         </nav>
         <span className="phase-tag">phase 1</span>
+        <button className="ghost" onClick={() => setShowHotkeys(true)}>
+          ⌨ blender keys
+        </button>
         {view === "gallery" && (
           <button className="ghost" onClick={loadRuns}>
             ↻ refresh
           </button>
         )}
       </header>
+
+      {showHotkeys && <HotkeysModal onClose={() => setShowHotkeys(false)} />}
 
       {error && <div className="banner error">backend error: {error}</div>}
 

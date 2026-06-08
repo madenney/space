@@ -58,6 +58,12 @@ export async function openInBlender(run_id) {
   return res.json();
 }
 
+export async function cancelJob(id) {
+  const res = await fetch(`/api/jobs/${id}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error(`POST /api/jobs/${id}/cancel -> ${res.status}`);
+  return res.json();
+}
+
 export const jobLogUrl = (id) => `/api/jobs/${id}/logs`;
 
 export async function fetchPresets() {
