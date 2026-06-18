@@ -28,7 +28,12 @@ export const RANGE_FIELDS = [
   { configKey: "spawn_ang_vel_range", min: "angMin", max: "angMax", label: "spin speed" },
 ];
 
-// Blank ("") values for every registered form field.
+// Boolean tunables: one config key <-> one checkbox form field.
+export const BOOL_FIELDS = [
+  { configKey: "camera_track_cog", form: "trackCog", label: "follow center of gravity" },
+];
+
+// Blank values for every registered form field.
 export function blankFields() {
   const f = {};
   for (const n of NUMBER_FIELDS) f[n.form] = "";
@@ -36,6 +41,7 @@ export function blankFields() {
     f[r.min] = "";
     f[r.max] = "";
   }
+  for (const b of BOOL_FIELDS) f[b.form] = false;
   return f;
 }
 
@@ -56,6 +62,10 @@ export function splitOverride(override) {
     }
     delete o[r.configKey];
   }
+  for (const b of BOOL_FIELDS) {
+    if (o[b.configKey] != null) fields[b.form] = !!o[b.configKey];
+    delete o[b.configKey];
+  }
   return { fields, rest: Object.keys(o).length ? o : null };
 }
 
@@ -72,6 +82,9 @@ export function fieldsFromDefaults(form, defaults) {
     if (!b) continue;
     if (form[r.min] === "") out[r.min] = b[0];
     if (form[r.max] === "") out[r.max] = b[1];
+  }
+  for (const b of BOOL_FIELDS) {
+    if (defaults?.[b.configKey] != null) out[b.form] = !!defaults[b.configKey];
   }
   return out;
 }
@@ -95,12 +108,16 @@ export function mergeOverride(form, base, defaults) {
     const range = [a, b].sort((x, y) => x - y);
     if (!rangesEqual(range, magBounds(defaults?.[r.configKey]))) out[r.configKey] = range;
   }
+  for (const b of BOOL_FIELDS) {
+    const want = !!form[b.form];
+    if (want !== !!defaults?.[b.configKey]) out[b.configKey] = want;
+  }
   return Object.keys(out).length ? out : null;
 }
 
 // Friendly label for an override key (for the jobs list "tweaked:" line).
 const LABELS = Object.fromEntries(
-  [...NUMBER_FIELDS, ...RANGE_FIELDS].map((f) => [f.configKey, f.label])
+  [...NUMBER_FIELDS, ...RANGE_FIELDS, ...BOOL_FIELDS].map((f) => [f.configKey, f.label])
 );
 export function overrideLabel(key) {
   return LABELS[key] || key;

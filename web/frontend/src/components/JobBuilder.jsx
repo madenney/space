@@ -166,158 +166,187 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
 
   return (
     <form className="builder" onSubmit={(e) => run({}, e)}>
-      <h3>New render</h3>
-
-      <label>
-        preset
-        <select value={selectedPreset} onChange={(e) => applyPreset(e.target.value)}>
-          <option value="">— none —</option>
+      <div className="builder-head">
+        <h3>New render</h3>
+        <select
+          className="preset-pick"
+          value={selectedPreset}
+          onChange={(e) => applyPreset(e.target.value)}
+          title="Load a saved preset"
+        >
+          <option value="">preset…</option>
           {presets.map((p) => (
             <option key={p.name} value={p.name}>
               {p.name}
             </option>
           ))}
         </select>
-      </label>
-
-      <label>
-        name <span className="hint">optional</span>
-        <input value={form.name} placeholder="auto" onChange={(e) => set("name", e.target.value)} />
-      </label>
-
-      <label>
-        quality
-        <select value={form.quality} onChange={(e) => set("quality", e.target.value)}>
-          {qualities.map((q) => (
-            <option key={q} value={q}>
-              {q}
-            </option>
-          ))}
-        </select>
-      </label>
-      {preset && (
-        <div className="preset-info">
-          {preset.res_x}×{preset.res_y} · {preset.samples} samples · {preset.fps} fps
-        </div>
-      )}
-
-      <label>
-        bodies
-        <input type="number" min={1} value={form.num_bodies} onChange={(e) => set("num_bodies", e.target.value)} />
-      </label>
-
-      <label>
-        gravity
-        <span className="hint">pairwise attraction between bodies (default {defaults?.gravity_const ?? "0.0005"})</span>
-        <input
-          type="number"
-          step={0.0001}
-          min={0}
-          value={form.gravity}
-          onChange={(e) => set("gravity", e.target.value)}
-        />
-      </label>
-
-      <label>
-        move speed <span className="hint">initial linear speed range (min → max)</span>
-        <div className="range-row">
-          <input
-            type="number" min={0} step={0.5}
-            value={form.linMin} onChange={(e) => set("linMin", e.target.value)}
-          />
-          <span className="range-sep">→</span>
-          <input
-            type="number" min={0} step={0.5}
-            value={form.linMax} onChange={(e) => set("linMax", e.target.value)}
-          />
-        </div>
-      </label>
-
-      <label>
-        spin speed <span className="hint">initial angular speed range (min → max)</span>
-        <div className="range-row">
-          <input
-            type="number" min={0} step={0.5}
-            value={form.angMin} onChange={(e) => set("angMin", e.target.value)}
-          />
-          <span className="range-sep">→</span>
-          <input
-            type="number" min={0} step={0.5}
-            value={form.angMax} onChange={(e) => set("angMax", e.target.value)}
-          />
-        </div>
-      </label>
-
-      <div className="cam-section">
-        <div className="cam-head">📷 camera <span className="hint">applies to new prep / render jobs</span></div>
-        <label>
-          angle preset
-          <select value="" onChange={(e) => applyCamPreset(e.target.value)}>
-            <option value="">— pick an angle —</option>
-            {Object.keys(CAM_PRESETS).map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          distance <span className="hint">how far back (default {defaults?.camera_radius ?? 40})</span>
-          <input type="number" min={1} step={1} value={form.camDist} onChange={(e) => set("camDist", e.target.value)} />
-        </label>
-        <label>
-          azimuth° <span className="hint">spin around the scene (0 = front)</span>
-          <input type="number" step={5} value={form.camAz} onChange={(e) => set("camAz", e.target.value)} />
-        </label>
-        <label>
-          elevation° <span className="hint">height angle (− below, + above)</span>
-          <input type="number" step={5} value={form.camElev} onChange={(e) => set("camElev", e.target.value)} />
-        </label>
       </div>
 
-      <label>
-        duration (seconds)
-        <input type="number" min={0.1} step={0.1} value={form.seconds} onChange={(e) => set("seconds", e.target.value)} />
-      </label>
+      {/* Basics — the essentials, open by default */}
+      <details className="group" open>
+        <summary>Basics</summary>
+        <div className="group-body">
+          <label>
+            name <span className="hint">optional</span>
+            <input value={form.name} placeholder="auto" onChange={(e) => set("name", e.target.value)} />
+          </label>
+          <label>
+            quality
+            <select value={form.quality} onChange={(e) => set("quality", e.target.value)}>
+              {qualities.map((q) => (
+                <option key={q} value={q}>
+                  {q}
+                </option>
+              ))}
+            </select>
+          </label>
+          {preset && (
+            <div className="preset-info">
+              {preset.res_x}×{preset.res_y} · {preset.samples} samples · {preset.fps} fps
+            </div>
+          )}
+          <label>
+            bodies
+            <input type="number" min={1} value={form.num_bodies} onChange={(e) => set("num_bodies", e.target.value)} />
+          </label>
+          <label>
+            duration (seconds)
+            <input type="number" min={0.1} step={0.1} value={form.seconds} onChange={(e) => set("seconds", e.target.value)} />
+          </label>
+        </div>
+      </details>
 
-      <label className="checkbox">
-        <input type="checkbox" checked={form.first_frame} onChange={(e) => set("first_frame", e.target.checked)} />
-        first frame only (quick lighting check)
-      </label>
+      {/* Physics — collapsed; tweak the simulation flavor */}
+      <details className="group">
+        <summary>Physics</summary>
+        <div className="group-body">
+          <label>
+            gravity
+            <span className="hint">pairwise attraction between bodies (default {defaults?.gravity_const ?? "0.0005"})</span>
+            <input
+              type="number"
+              step={0.0001}
+              min={0}
+              value={form.gravity}
+              onChange={(e) => set("gravity", e.target.value)}
+            />
+          </label>
+          <label>
+            move speed <span className="hint">initial linear speed range (min → max)</span>
+            <div className="range-row">
+              <input
+                type="number" min={0} step={0.5}
+                value={form.linMin} onChange={(e) => set("linMin", e.target.value)}
+              />
+              <span className="range-sep">→</span>
+              <input
+                type="number" min={0} step={0.5}
+                value={form.linMax} onChange={(e) => set("linMax", e.target.value)}
+              />
+            </div>
+          </label>
+          <label>
+            spin speed <span className="hint">initial angular speed range (min → max)</span>
+            <div className="range-row">
+              <input
+                type="number" min={0} step={0.5}
+                value={form.angMin} onChange={(e) => set("angMin", e.target.value)}
+              />
+              <span className="range-sep">→</span>
+              <input
+                type="number" min={0} step={0.5}
+                value={form.angMax} onChange={(e) => set("angMax", e.target.value)}
+              />
+            </div>
+          </label>
+        </div>
+      </details>
+
+      {/* Camera — collapsed; applies to new prep / render jobs */}
+      <details className="group">
+        <summary>Camera</summary>
+        <div className="group-body">
+          <label>
+            angle preset
+            <select value="" onChange={(e) => applyCamPreset(e.target.value)}>
+              <option value="">— pick an angle —</option>
+              {Object.keys(CAM_PRESETS).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            distance <span className="hint">how far back (default {defaults?.camera_radius ?? 40})</span>
+            <input type="number" min={1} step={1} value={form.camDist} onChange={(e) => set("camDist", e.target.value)} />
+          </label>
+          <label>
+            azimuth° <span className="hint">spin around the scene (0 = front)</span>
+            <input type="number" step={5} value={form.camAz} onChange={(e) => set("camAz", e.target.value)} />
+          </label>
+          <label>
+            elevation° <span className="hint">height angle (− below, + above)</span>
+            <input type="number" step={5} value={form.camElev} onChange={(e) => set("camElev", e.target.value)} />
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={!!form.trackCog}
+              onChange={(e) => set("trackCog", e.target.checked)}
+            />
+            follow center of gravity <span className="hint">camera moves with the swarm (fixed angle)</span>
+          </label>
+        </div>
+      </details>
 
       {overrideKeys.length > 0 && (
         <div className="override-info">
-          + config override: {overrideKeys.map((k) => `${k}=${form.config_override[k]}`).join(", ")}
+          + override: {overrideKeys.map((k) => `${k}=${form.config_override[k]}`).join(", ")}
         </div>
       )}
 
       {error && <div className="banner error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <button className="primary" type="submit" disabled={submitting}>
-        {submitting ? "queuing…" : "▶ render"}
-      </button>
-      <button
-        className="secondary"
-        type="button"
-        disabled={submitting}
-        onClick={() => run({ prep_scene: true })}
-        title="Run the sim and build an editable .blend, then stop before rendering"
-      >
-        🎬 prep &amp; edit in Blender
-      </button>
-      <div className="prep-help">
-        builds an editable scene → open it in Blender to set camera/lights → then “render this scene” from the job below.
+      {/* Actions — always visible */}
+      <div className="builder-actions">
+        <label className="checkbox">
+          <input type="checkbox" checked={form.first_frame} onChange={(e) => set("first_frame", e.target.checked)} />
+          first frame only (quick lighting check)
+        </label>
+        <button className="primary" type="submit" disabled={submitting}>
+          {submitting ? "queuing…" : "▶ render"}
+        </button>
+        <button
+          className="secondary"
+          type="button"
+          disabled={submitting}
+          onClick={() => run({ prep_scene: true })}
+          title="Run the sim and build an editable .blend, then stop before rendering"
+        >
+          🎬 prep &amp; edit in Blender
+        </button>
+        <div className="prep-help">
+          builds an editable scene → open it in Blender to set camera/lights → then “render this scene” from the job below.
+        </div>
       </div>
 
-      <div className="save-preset">
-        <input
-          value={presetName}
-          placeholder="save current as preset…"
-          onChange={(e) => setPresetName(e.target.value)}
-        />
-        <button type="button" className="ghost" onClick={doSavePreset} disabled={!presetName.trim()}>
-          save
-        </button>
-      </div>
+      {/* Save preset — collapsed; out of the way until needed */}
+      <details className="group">
+        <summary>Save as preset</summary>
+        <div className="group-body">
+          <div className="save-preset">
+            <input
+              value={presetName}
+              placeholder="name this preset…"
+              onChange={(e) => setPresetName(e.target.value)}
+            />
+            <button type="button" className="ghost" onClick={doSavePreset} disabled={!presetName.trim()}>
+              save
+            </button>
+          </div>
+        </div>
+      </details>
     </form>
   );
 }

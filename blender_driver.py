@@ -206,6 +206,30 @@ if frame_start > frame_end:
 total_bodies = len(bodies) if bodies else len(data_keys)
 print(f"Loaded physics data for {{total_bodies}} bodies, {{frames_total}} frames", flush=True)
 
+# Optional: per-frame mass(volume)-weighted centroid, so the camera can track
+# the swarm's center of gravity as it drifts (see the Camera block below).
+TRACK_COG = {str(bool(cfg_data.get("camera_track_cog", False)))}
+cog_positions = None
+cog_frames = None
+if TRACK_COG and data_keys:
+    _wmap = {{}}
+    for _b in bodies:
+        _d = _b.get("dims", {{}})
+        _s = _b.get("shape")
+        if _s == "sphere":
+            _r = _d.get("radius", 0.5); _v = (4.0 / 3.0) * math.pi * _r ** 3
+        elif _s == "box":
+            _v = _d.get("sx", 1.0) * _d.get("sy", 1.0) * _d.get("sz", 1.0)
+        elif _s == "cylinder":
+            _r = _d.get("radius", 0.5); _h = _d.get("height", _d.get("h", 1.0)); _v = math.pi * _r * _r * _h
+        else:
+            _v = 1.0
+        _wmap[_b.get("name")] = max(_v, 1e-6)
+    _w = np.array([_wmap.get(k, 1.0) for k in data_keys], dtype=float)
+    _pos = np.stack([data[k][:, 2:5] for k in data_keys], axis=0)  # (bodies, frames, xyz)
+    cog_positions = (_pos * _w[:, None, None]).sum(axis=0) / _w.sum()  # (frames, xyz)
+    cog_frames = data[data_keys[0]][:, 0].astype(int)  # frame index per row
+
 def create_anim_mesh(body_def):
 
     shape = body_def["shape"]
@@ -295,7 +319,11 @@ if bodies:
         anim_objects.append(obj)
         print(f"Keyframed {{idx + 1}}/{{total_bodies}} bodies", flush=True)
 
-    # Export Alembic (animated objects only)
+    # Export Alembic (animated objects only). Alembic is time-based, so the
+    # scene fps MUST match the render fps here — otherwise the cache spans the
+    # wrong number of seconds and re-importing at a different fps silently drops
+    # frames (e.g. 30 frames @ 24fps re-read at 15fps becomes ~19 frames).
+    bpy.context.scene.render.fps = frame_rate
     for obj in anim_objects:
         obj.select_set(True)
     print("Exporting Alembic... (Blender may be quiet for a while)", flush=True)
@@ -351,9 +379,18 @@ if scene_prepped and scene_alembic_path:
 imported_objs = []
 imported_obj_map = {{}}
 if not skip_alembic_import:
-    bpy.ops.wm.alembic_import(filepath=str(abc_path), as_background_job=False, scale=1.0)
+    # set_frame_range=False: don't let the importer resize the scene range to the
+    # cache's time span (which can shrink it on an fps mismatch). We set the
+    # range explicitly from the physics frame count.
+    bpy.ops.wm.alembic_import(
+        filepath=str(abc_path), as_background_job=False, scale=1.0, set_frame_range=False
+    )
     imported_objs = [obj for obj in bpy.data.objects if obj.name not in existing_obj_names]
     imported_obj_map = {{obj.name: obj for obj in imported_objs}}
+    # Re-assert the intended range in case the import nudged it anyway.
+    bpy.context.scene.frame_start = frame_start
+    bpy.context.scene.frame_end = frame_end
+    bpy.context.scene.render.fps = frame_rate
 
 # Ensure imported objects are visible for render/viewport
 for obj in imported_objs:
@@ -500,12 +537,30 @@ if not (scene_loaded and scene_use_camera and scene_camera):
     bpy.ops.object.empty_add(location=target_pos)
     target = bpy.context.active_object
     target.name = "CameraTarget"
-    # Aim by setting rotation directly instead of a Track-To constraint, so this
-    # stays a normal, freely-editable camera: Ctrl+Alt+Numpad0 (align to view)
-    # and manual rotation both behave as expected. The empty is kept for DOF.
-    aim = target_pos - camera.location
-    if aim.length > 0:
-        camera.rotation_euler = aim.to_track_quat('-Z', 'Y').to_euler()
+    if cog_positions is not None:
+        # Follow the center of gravity: the camera keeps a FIXED offset and a
+        # FIXED angle relative to the swarm — it translates rigidly with the COG
+        # (like a dolly) and never rotates, so the cluster stays put in frame.
+        cog0 = map_pos(mathutils.Vector((float(cog_positions[0][0]), float(cog_positions[0][1]), float(cog_positions[0][2]))))
+        offset = camera.location - cog0  # frozen camera->COG geometry at frame 0
+        aim = cog0 - camera.location     # set the angle once; never re-aimed
+        if aim.length > 0:
+            camera.rotation_euler = aim.to_track_quat('-Z', 'Y').to_euler()
+        for _i in range(len(cog_frames)):
+            _c = cog_positions[_i]
+            _cog = map_pos(mathutils.Vector((float(_c[0]), float(_c[1]), float(_c[2]))))
+            camera.location = _cog + offset
+            camera.keyframe_insert(data_path="location", frame=int(cog_frames[_i]))
+            # DOF focus rides the COG so the cluster stays sharp.
+            target.location = _cog
+            target.keyframe_insert(data_path="location", frame=int(cog_frames[_i]))
+    else:
+        # Aim by setting rotation directly instead of a Track-To constraint, so this
+        # stays a normal, freely-editable camera: Ctrl+Alt+Numpad0 (align to view)
+        # and manual rotation both behave as expected. The empty is kept for DOF.
+        aim = target_pos - camera.location
+        if aim.length > 0:
+            camera.rotation_euler = aim.to_track_quat('-Z', 'Y').to_euler()
     camera.data.lens = 35
     camera.data.clip_start = 0.1
     camera.data.clip_end = 100

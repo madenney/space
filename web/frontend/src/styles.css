@@ -228,9 +228,33 @@ kbd, .keyhint { font-size: 11px; }
 .range-row { display: flex; align-items: center; gap: 8px; }
 .range-row input { flex: 1; min-width: 0; }
 .range-sep { color: var(--muted); font-size: 13px; }
-.cam-section { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
-.cam-head { font-size: 12px; color: var(--text); font-weight: 600; }
-.cam-head .hint { font-weight: 400; }
+/* Builder header: title + compact preset loader */
+.builder-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.builder-head h3 { font-size: 15px; }
+.preset-pick { max-width: 45%; padding: 6px 8px !important; font-size: 12px !important; }
+
+/* Collapsible field groups */
+.group { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.group > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::before { content: "▸"; color: var(--muted); font-size: 10px; transition: transform 0.12s ease; }
+.group[open] > summary::before { transform: rotate(90deg); }
+.group > summary:hover { background: var(--bg); }
+.group-body { display: flex; flex-direction: column; gap: 12px; padding: 6px 12px 14px; }
+
+/* Pinned actions block */
+.builder-actions { display: flex; flex-direction: column; gap: 10px; }
 .override-info { color: #8fd6a0; font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .notice { color: #8fd6a0; font-size: 12px; }
 .save-preset { display: flex; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
@@ -274,6 +298,52 @@ button.secondary:disabled { opacity: 0.5; cursor: default; }
 .scene-path { color: var(--muted); font-size: 10px; word-break: break-all; }
 .scene-q { margin-left: auto; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 4px; }
 .scene-q select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font-size: 11px; }
+
+/* Row layout: small thumbnail on the left, body fills the rest */
+.job-main { display: flex; gap: 10px; align-items: flex-start; }
+.job-body { flex: 1; min-width: 0; }
+
+.thumb-btn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 84px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+  cursor: pointer;
+  line-height: 0;
+}
+.thumb-btn:hover, .thumb-btn.open { border-color: var(--accent); }
+.job-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-badge {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  line-height: 1.3;
+}
+
+/* Expanded result video, full row width below the body */
+.preview-expanded { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.job-video, .job-still {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  display: block;
+}
+.preview-actions { display: flex; gap: 14px; }
+
+button.link.delete { color: #ff9b9b; }
+button.link.delete:hover { color: #ffb3b3; }
+.confirm-delete { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.confirm-delete .link { padding-top: 0; }
 
 /* Jobs list */
 .jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

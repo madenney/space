@@ -136,6 +136,18 @@ def cancel_job(job_id: int) -> dict:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
 
 
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: int) -> dict:
+    """Delete a job and its source files (logs, override, output run dir)."""
+    try:
+        jobmanager.delete_job(job_id)
+        return {"deleted": job_id}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @app.get("/api/jobs/{job_id}/logs")
 def job_logs(job_id: int):
     if jobmanager.get_job(job_id) is None:

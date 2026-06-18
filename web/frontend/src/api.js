@@ -64,6 +64,15 @@ export async function cancelJob(id) {
   return res.json();
 }
 
+export async function deleteJob(id) {
+  const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `DELETE /api/jobs/${id} -> ${res.status}`);
+  }
+  return res.json();
+}
+
 export const jobLogUrl = (id) => `/api/jobs/${id}/logs`;
 
 export async function fetchPresets() {

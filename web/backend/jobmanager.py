@@ -14,6 +14,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -319,6 +320,33 @@ def cancel_job(job_id: int) -> Dict[str, Any]:
         pass
 
     return get_job(job_id) or {}
+
+
+def delete_job(job_id: int) -> bool:
+    """Remove a job record plus its log, override file, and output run dir."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job["status"] in ("running", "pending"):
+            raise ValueError("cancel the job before deleting it")
+        job = _jobs.pop(job_id)
+        _persist()
+
+    # Filesystem cleanup (best-effort, outside the lock).
+    log_path = job.get("log_path")
+    if log_path:
+        Path(log_path).unlink(missing_ok=True)
+    (JOBS_DIR / f"job_{job_id}_override.json").unlink(missing_ok=True)
+
+    run_dir = job.get("run_dir")
+    if run_dir:
+        rd = Path(run_dir).resolve()
+        out_root = runs.OUTPUT_ROOT.resolve()
+        # Safety: only ever rmtree something that lives under the output root.
+        if out_root in rd.parents and rd.is_dir():
+            shutil.rmtree(rd, ignore_errors=True)
+    return True
 
 
 def tail_log(job_id: int):

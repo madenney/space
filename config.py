@@ -41,6 +41,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "camera_radius": 40.0,      # distance from the scene center
     "camera_azimuth": 0.0,      # horizontal angle around the scene (deg); 0 = front
     "camera_elevation": 12.0,   # vertical angle above the horizon (deg)
+    # Make the camera follow the swarm's (mass-weighted) center of gravity: it
+    # keeps a fixed offset/angle and translates with the COG each frame (dolly),
+    # so the cluster stays put in frame. False = static camera at the origin.
+    "camera_track_cog": False,
     "ground_size": (40.0, 1.0, 40.0),
     "ground_center": (0.0, -0.5, 0.0),
     "obstacle_configs": [],
