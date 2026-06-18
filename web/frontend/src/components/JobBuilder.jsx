@@ -1,43 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchDefaults, createJob, fetchPresets, savePreset } from "../api.js";
+import {
+  blankFields,
+  fieldsFromDefaults,
+  splitOverride,
+  mergeOverride,
+} from "../fields.js";
 
 const BLANK = {
   name: "",
   quality: "low",
   num_bodies: 5,
   seconds: 1,
-  gravity: "",  // gravity_const; filled from defaults on load
-  linMin: "",   // spawn_lin_vel_range magnitude bounds
-  linMax: "",
-  angMin: "",   // spawn_ang_vel_range magnitude bounds
-  angMax: "",
+  ...blankFields(), // gravity / move+spin speed / camera fields (see fields.js)
   first_frame: false,
   config_override: null,
 };
 
-// Physics uses |velocity| as a min→max band, so a [-15,15] range really means
-// "speed magnitude 15..15". Reduce a raw range to sorted magnitude bounds.
-function magBounds(arr) {
-  if (!arr || arr.length < 2) return null;
-  return arr.map((v) => Math.abs(v)).sort((a, b) => a - b);
-}
-
-function rangesEqual(a, b) {
-  return a && b && Number(a[0]) === Number(b[0]) && Number(a[1]) === Number(b[1]);
-}
-
-// Pull the fields we give dedicated inputs (gravity, the two speed ranges) out
-// of a config_override blob, leaving any other overrides in `rest`.
-function splitOverride(override) {
-  const o = { ...(override || {}) };
-  const gravity = o.gravity_const ?? null;
-  const lin = magBounds(o.spawn_lin_vel_range);
-  const ang = magBounds(o.spawn_ang_vel_range);
-  delete o.gravity_const;
-  delete o.spawn_lin_vel_range;
-  delete o.spawn_ang_vel_range;
-  return { gravity, lin, ang, rest: Object.keys(o).length ? o : null };
-}
+// Handy starting angles (azimuth°, elevation°). Distance is left as-is.
+const CAM_PRESETS = {
+  "front": { az: 0, elev: 5 },
+  "3/4 view": { az: 35, elev: 15 },
+  "side": { az: 90, elev: 8 },
+  "top-down": { az: 0, elev: 80 },
+  "low / dramatic": { az: 20, elev: -10 },
+};
 
 export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
   const [defaults, setDefaults] = useState(null);
@@ -58,18 +45,12 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         setDefaults(d);
         // Don't clobber a cloned-in seed with the plain defaults.
         if (seededRef.current) return;
-        const lin = magBounds(d.spawn_lin_vel_range);
-        const ang = magBounds(d.spawn_ang_vel_range);
         setForm((f) => ({
           ...f,
           quality: d.default_quality ?? f.quality,
           num_bodies: d.default_body_count ?? f.num_bodies,
           seconds: d.duration_seconds ?? f.seconds,
-          gravity: f.gravity === "" && d.gravity_const != null ? d.gravity_const : f.gravity,
-          linMin: f.linMin === "" && lin ? lin[0] : f.linMin,
-          linMax: f.linMax === "" && lin ? lin[1] : f.linMax,
-          angMin: f.angMin === "" && ang ? ang[0] : f.angMin,
-          angMax: f.angMax === "" && ang ? ang[1] : f.angMax,
+          ...fieldsFromDefaults(f, d),
         }));
       })
       .catch((e) => setError(e.message));
@@ -81,17 +62,13 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     if (!seed) return;
     seededRef.current = true;
     setSelectedPreset("");
-    const { gravity, lin, ang, rest } = splitOverride(seed.config_override);
+    const { fields, rest } = splitOverride(seed.config_override);
     setForm((f) => ({
       ...f,
       quality: seed.quality ?? f.quality,
       num_bodies: seed.num_bodies ?? f.num_bodies,
       seconds: seed.seconds ?? f.seconds,
-      gravity: gravity != null ? gravity : f.gravity,
-      linMin: lin ? lin[0] : f.linMin,
-      linMax: lin ? lin[1] : f.linMax,
-      angMin: ang ? ang[0] : f.angMin,
-      angMax: ang ? ang[1] : f.angMax,
+      ...fields,
       first_frame: seed.first_frame ?? false,
       config_override: rest,
       name: seed.name ? `${seed.name}-copy` : f.name,
@@ -110,46 +87,30 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     }
     const p = presets.find((x) => x.name === name);
     if (!p) return;
-    const { gravity, lin, ang, rest } = splitOverride(p.config_override);
+    const { fields, rest } = splitOverride(p.config_override);
     setForm((f) => ({
       ...f,
       quality: p.quality ?? f.quality,
       num_bodies: p.num_bodies ?? f.num_bodies,
       seconds: p.seconds ?? f.seconds,
-      gravity: gravity != null ? gravity : f.gravity,
-      linMin: lin ? lin[0] : f.linMin,
-      linMax: lin ? lin[1] : f.linMax,
-      angMin: ang ? ang[0] : f.angMin,
-      angMax: ang ? ang[1] : f.angMax,
+      ...fields,
       first_frame: p.first_frame ?? f.first_frame,
       config_override: rest,
     }));
   }
 
+  // Set azimuth/elevation from a named angle preset (leaves distance alone).
+  function applyCamPreset(name) {
+    const p = CAM_PRESETS[name];
+    if (!p) return;
+    setForm((f) => ({ ...f, camAz: p.az, camElev: p.elev }));
+  }
+
   // Fold the gravity field back into config_override. Only include it when it
-  // differs from the engine default, so an untouched value stays implicit.
+  // differs from its default, so an untouched value stays implicit. The field
+  // <-> config-key mapping lives in fields.js (single source of truth).
   function mergedOverride() {
-    const base = { ...(form.config_override || {}) };
-
-    const g = Number(form.gravity);
-    const dflt = defaults?.gravity_const;
-    if (form.gravity !== "" && !Number.isNaN(g) && g !== dflt) {
-      base.gravity_const = g;
-    }
-
-    // Speed ranges: send only when the user moved them off the defaults.
-    const addRange = (key, minV, maxV, defArr) => {
-      if (minV === "" || maxV === "") return;
-      const lo = Number(minV);
-      const hi = Number(maxV);
-      if (Number.isNaN(lo) || Number.isNaN(hi)) return;
-      const range = [lo, hi].sort((a, b) => a - b);
-      if (!rangesEqual(range, magBounds(defArr))) base[key] = range;
-    };
-    addRange("spawn_lin_vel_range", form.linMin, form.linMax, defaults?.spawn_lin_vel_range);
-    addRange("spawn_ang_vel_range", form.angMin, form.angMax, defaults?.spawn_ang_vel_range);
-
-    return Object.keys(base).length ? base : null;
+    return mergeOverride(form, form.config_override, defaults);
   }
 
   function payload(extra) {
@@ -286,6 +247,31 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
           />
         </div>
       </label>
+
+      <div className="cam-section">
+        <div className="cam-head">📷 camera <span className="hint">applies to new prep / render jobs</span></div>
+        <label>
+          angle preset
+          <select value="" onChange={(e) => applyCamPreset(e.target.value)}>
+            <option value="">— pick an angle —</option>
+            {Object.keys(CAM_PRESETS).map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          distance <span className="hint">how far back (default {defaults?.camera_radius ?? 40})</span>
+          <input type="number" min={1} step={1} value={form.camDist} onChange={(e) => set("camDist", e.target.value)} />
+        </label>
+        <label>
+          azimuth° <span className="hint">spin around the scene (0 = front)</span>
+          <input type="number" step={5} value={form.camAz} onChange={(e) => set("camAz", e.target.value)} />
+        </label>
+        <label>
+          elevation° <span className="hint">height angle (− below, + above)</span>
+          <input type="number" step={5} value={form.camElev} onChange={(e) => set("camElev", e.target.value)} />
+        </label>
+      </div>
 
       <label>
         duration (seconds)

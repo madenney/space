@@ -38,18 +38,25 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
 
     # Camera / ground / obstacles
-    "camera_radius": 40.0,
+    "camera_radius": 40.0,      # distance from the scene center
+    "camera_azimuth": 0.0,      # horizontal angle around the scene (deg); 0 = front
+    "camera_elevation": 12.0,   # vertical angle above the horizon (deg)
     "ground_size": (40.0, 1.0, 40.0),
     "ground_center": (0.0, -0.5, 0.0),
     "obstacle_configs": [],
     "obstacle_color": (0.2, 0.22, 0.26),
 
     # Lighting / environment
+    # Soft studio setup for orbs in gray space: big AREA lights give gentle,
+    # wraparound light with soft shadows. `size` is the softness dial (bigger =
+    # softer edges/shadows). Lights auto-aim at the origin in blender_driver.
     "light_configs": [
-        {"type": "POINT", "pos": (10, -10, 15), "energy": 5000},
-        {"type": "POINT", "pos": (-10, -10, -15), "energy": 3000},
-        {"type": "POINT", "pos": (15, -15, 0), "energy": 3000},
+        {"type": "AREA", "pos": (14, -14, 16), "energy": 3000, "size": 18},  # key (upper front)
+        {"type": "AREA", "pos": (-16, -10, 4), "energy": 1500, "size": 25},  # fill (opposite, softer)
+        {"type": "AREA", "pos": (6, 16, 10),  "energy": 2200, "size": 12},   # rim/back (separation)
     ],
+    # Gray "void" backdrop + ambient fill so shadows don't crush to black.
+    "world_color": (0.05, 0.05, 0.055, 1.0),
     "hdri_path": None,
     "hdri_strength": 1.0,
     "blender_environment": None,

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
 
@@ -44,6 +44,50 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "output_root": str(runs.OUTPUT_ROOT)}
+
+
+def _healthz_detail(job: Dict[str, Any], n: int) -> str:
+    """Human-readable summary of what's currently rendering, for Shelf's tooltip."""
+    label = job.get("name") or f"job-{job['id']}"
+    bits = [f"rendering {label}"]
+    run_dir = job.get("run_dir")
+    if run_dir:
+        try:
+            done = sum(1 for _ in (Path(run_dir) / "rendered_frames").glob("*.png"))
+            if done:
+                bits.append(f"{done} frames")
+        except OSError:
+            pass
+    if n > 1:
+        bits.append(f"(+{n - 1} more)")
+    return ", ".join(bits)
+
+
+@app.get("/healthz")
+def healthz() -> JSONResponse:
+    """Liveness probe for Shelf: green while a sim/render is working, gray when not.
+
+    Shelf treats a 2xx as "up". We return 200 + status "active" only while a job
+    is running or queued; when idle we return 503 so a Shelf health spec with
+    ``expect_up: false`` paints it *inactive* (gray) — the same gray as the
+    backend being off entirely. So: green = something is rendering, gray = idle
+    or off.
+    """
+    active = jobmanager.active_jobs()
+    if not active:
+        return JSONResponse(
+            {"status": "idle", "detail": "no active render", "active": 0},
+            status_code=503,
+        )
+    return JSONResponse(
+        {
+            "status": "active",
+            "detail": _healthz_detail(active[0], len(active)),
+            "active": len(active),
+            "jobs": [j["id"] for j in active],
+        },
+        status_code=200,
+    )
 
 
 @app.get("/api/config/defaults")

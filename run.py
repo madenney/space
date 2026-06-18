@@ -272,6 +272,11 @@ def main():
     (run_dir / "alembic").mkdir(parents=True, exist_ok=True)
     (run_dir / "rendered_frames").mkdir(parents=True, exist_ok=True)
     save_config(config, run_dir / "config_used.json")
+    # Snapshot the defaults this run was built against, so tools that derive a
+    # "what differed" spec later (e.g. the web studio's clone-to-builder) diff
+    # against the run's own baseline instead of whatever the defaults have since
+    # become. Without this, editing DEFAULT_CONFIG silently rewrites old runs.
+    save_config(DEFAULT_CONFIG, run_dir / "config_base.json")
     scene_override = Path(args.blender_scene).expanduser() if args.blender_scene else None
     scene_output_path = Path(args.scene_out).expanduser() if args.scene_out else None
     if scene_output_path is None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import signal
 import subprocess
@@ -39,6 +40,43 @@ _procs: Dict[int, subprocess.Popen] = {}
 # Job ids the user asked to cancel (distinguishes a kill from a real failure).
 _cancelled: set[int] = set()
 
+# Jobs run one-at-a-time through a single worker: the pipeline is GPU-bound and
+# two concurrent renders just contend for the one GPU (OptiX). Queued jobs sit
+# in "pending" until the worker picks them up.
+_work_queue: "queue.Queue[int]" = queue.Queue()
+_worker_thread: Optional[threading.Thread] = None
+
+
+def _ensure_worker() -> None:
+    global _worker_thread
+    with _lock:
+        if _worker_thread is not None and _worker_thread.is_alive():
+            return
+        _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
+        _worker_thread.start()
+
+
+def _worker_loop() -> None:
+    while True:
+        job_id = _work_queue.get()
+        try:
+            with _lock:
+                job = _jobs.get(job_id)
+                # Skip jobs cancelled while still queued, or otherwise gone.
+                if job is None or job["status"] != "pending":
+                    continue
+                args = job["args"]
+            _run(job_id, args)
+        except Exception:
+            # A failure inside one job must not kill the worker.
+            with _lock:
+                job = _jobs.get(job_id)
+                if job is not None and not is_terminal(job["status"]):
+                    job.update(status="failed", error="worker error", finished_at=_utc_now())
+                    _persist()
+        finally:
+            _work_queue.task_done()
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -46,8 +84,10 @@ def _utc_now() -> str:
 
 def _persist() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    # Don't persist transient fields; the record dicts are already JSON-safe.
-    JOBS_FILE.write_text(json.dumps(list(_jobs.values()), indent=2))
+    # Write-then-rename so a crash mid-write can't corrupt jobs.json.
+    tmp = JOBS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(list(_jobs.values()), indent=2))
+    os.replace(tmp, JOBS_FILE)
 
 
 def load_persisted() -> None:
@@ -60,7 +100,9 @@ def load_persisted() -> None:
         return
     with _lock:
         for rec in records:
-            if rec.get("status") == "running":
+            # Anything mid-flight (running) or still queued (pending) is dead now:
+            # its thread/queue didn't survive the restart. Mark it interrupted.
+            if rec.get("status") in ("running", "pending"):
                 rec["status"] = "interrupted"
                 rec["error"] = "backend restarted while job was running"
             _jobs[rec["id"]] = rec
@@ -134,8 +176,9 @@ def create_job(req: Dict[str, Any]) -> Dict[str, Any]:
         _jobs[job_id] = job
         _persist()
 
-    thread = threading.Thread(target=_run, args=(job_id, args), daemon=True)
-    thread.start()
+    # Hand off to the single serial worker (starts it if needed).
+    _ensure_worker()
+    _work_queue.put(job_id)
     return job
 
 
@@ -238,6 +281,12 @@ def get_job(job_id: int) -> Optional[Dict[str, Any]]:
 
 def is_terminal(status: str) -> bool:
     return status in ("success", "failed", "interrupted", "cancelled")
+
+
+def active_jobs() -> List[Dict[str, Any]]:
+    """Jobs that are currently working (queued or running) — for liveness."""
+    with _lock:
+        return [dict(j) for j in _jobs.values() if j["status"] in ("running", "pending")]
 
 
 def cancel_job(job_id: int) -> Dict[str, Any]:

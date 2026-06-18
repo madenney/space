@@ -459,7 +459,7 @@ else:
     wnodes.clear()
     bg = wnodes.new("ShaderNodeBackground")
     bg.inputs[1].default_value = hdri_strength
-    bg.inputs[0].default_value = (0.02, 0.02, 0.02, 1)
+    bg.inputs[0].default_value = {tuple(cfg_data.get("world_color", (0.02, 0.02, 0.02, 1.0)))}
     out_world = wnodes.new("ShaderNodeOutputWorld")
     wlinks.new(bg.outputs["Background"], out_world.inputs["Surface"])
     if use_hdr and Path(use_hdr).exists():
@@ -484,7 +484,14 @@ if scene_loaded and scene_use_lights:
 # Camera
 if not (scene_loaded and scene_use_camera and scene_camera):
     camera_radius = {cfg_data.get("camera_radius", 40.0)}
-    cam_pos = map_pos(mathutils.Vector((camera_radius, 0, 0)))
+    camera_azimuth = math.radians({cfg_data.get("camera_azimuth", 0.0)})
+    camera_elevation = math.radians({cfg_data.get("camera_elevation", 12.0)})
+    # Spherical placement in Chrono space (Y is up): azimuth sweeps the horizontal
+    # plane, elevation lifts above it. map_pos then converts to Blender Z-up.
+    cx = camera_radius * math.cos(camera_elevation) * math.cos(camera_azimuth)
+    cz = camera_radius * math.cos(camera_elevation) * math.sin(camera_azimuth)
+    cy = camera_radius * math.sin(camera_elevation)
+    cam_pos = map_pos(mathutils.Vector((cx, cy, cz)))
     target_pos = map_pos(mathutils.Vector((0, 0, 0)))
     bpy.ops.object.camera_add(location=cam_pos)
     camera = bpy.context.active_object
@@ -493,10 +500,12 @@ if not (scene_loaded and scene_use_camera and scene_camera):
     bpy.ops.object.empty_add(location=target_pos)
     target = bpy.context.active_object
     target.name = "CameraTarget"
-    constraint = camera.constraints.new(type='TRACK_TO')
-    constraint.target = target
-    constraint.track_axis = 'TRACK_NEGATIVE_Z'
-    constraint.up_axis = 'UP_Y'
+    # Aim by setting rotation directly instead of a Track-To constraint, so this
+    # stays a normal, freely-editable camera: Ctrl+Alt+Numpad0 (align to view)
+    # and manual rotation both behave as expected. The empty is kept for DOF.
+    aim = target_pos - camera.location
+    if aim.length > 0:
+        camera.rotation_euler = aim.to_track_quat('-Z', 'Y').to_euler()
     camera.data.lens = 35
     camera.data.clip_start = 0.1
     camera.data.clip_end = 100
@@ -512,6 +521,15 @@ if not (scene_loaded and scene_use_lights and scene_has_any_lights):
         bpy.ops.object.light_add(type=light_type, location=pos)
         light = bpy.context.active_object
         light.data.energy = energy
+        size = cfg.get("size")
+        if size is not None and hasattr(light.data, "size"):
+            light.data.size = size
+        # Area/spot/sun emit along local -Z, so aim them at the origin where the
+        # bodies live (points are omnidirectional and don't care).
+        if light_type in ("AREA", "SPOT", "SUN"):
+            direction = mathutils.Vector((0, 0, 0)) - light.location
+            if direction.length > 0:
+                light.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
 
 # Render settings
 scene.render.engine = 'CYCLES'

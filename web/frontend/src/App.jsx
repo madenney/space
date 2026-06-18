@@ -7,23 +7,44 @@ import JobsPanel from "./components/JobsPanel.jsx";
 import LogConsole from "./components/LogConsole.jsx";
 import HotkeysModal from "./components/HotkeysModal.jsx";
 
+// Persisted UI state — survives closing/reopening the tab or browser.
+const UI_KEY = "studio.ui.v1";
+function loadUI() {
+  try {
+    return JSON.parse(localStorage.getItem(UI_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
 export default function App() {
-  // Hash deep-links: #render or #render/<jobId>
+  // A URL hash (#render/<jobId>) wins if present; otherwise restore where we
+  // left off last time, then fall back to the gallery.
   const initialHash = window.location.hash;
+  const saved = loadUI();
   const [view, setView] = useState(() =>
-    initialHash.startsWith("#render") ? "render" : "gallery"
+    initialHash.startsWith("#render") ? "render" : saved.view ?? "gallery"
   ); // "gallery" | "render"
   const [runs, setRuns] = useState([]);
-  const [selectedRun, setSelectedRun] = useState(null);
+  const [selectedRun, setSelectedRun] = useState(saved.selectedRun ?? null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const [activeJob, setActiveJob] = useState(() => {
     const m = initialHash.match(/^#render\/(\d+)$/);
-    return m ? Number(m[1]) : null;
+    if (m) return Number(m[1]);
+    return saved.activeJob ?? null;
   });
   const [jobsRefresh, setJobsRefresh] = useState(0);
   const [showHotkeys, setShowHotkeys] = useState(false);
+
+  // Remember the current spot whenever it changes.
+  useEffect(() => {
+    localStorage.setItem(
+      UI_KEY,
+      JSON.stringify({ view, selectedRun, activeJob })
+    );
+  }, [view, selectedRun, activeJob]);
 
   // Settings cloned into the builder from a previous job/run.
   const [builderSeed, setBuilderSeed] = useState(null);
@@ -126,12 +147,14 @@ export default function App() {
 
         {view === "render" && (
           <div className="render-view">
-            <div className="render-left">
+            <div className="render-builder">
               <JobBuilder
                 onSubmitted={onJobSubmitted}
                 seed={builderSeed}
                 seedNonce={seedNonce}
               />
+            </div>
+            <div className="render-jobs">
               <h4 className="section">jobs</h4>
               <JobsPanel
                 activeId={activeJob}
@@ -142,9 +165,9 @@ export default function App() {
                 refreshKey={jobsRefresh}
               />
             </div>
-            <div className="render-right">
+            <aside className="render-log">
               <LogConsole jobId={activeJob} />
-            </div>
+            </aside>
           </div>
         )}
       </main>

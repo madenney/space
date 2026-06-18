@@ -191,9 +191,13 @@ kbd, .keyhint { font-size: 11px; }
 .nav-btn.active { color: var(--text); background: var(--panel-2); border-color: var(--line); }
 
 /* Render view */
-.render-view { display: grid; grid-template-columns: 360px 1fr; gap: 20px; align-items: start; }
-@media (max-width: 860px) { .render-view { grid-template-columns: 1fr; } }
-.render-left { display: flex; flex-direction: column; gap: 12px; }
+.render-view { display: grid; grid-template-columns: 340px minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+/* Below ~1100px the log drops under the builder+jobs; below ~760px everything stacks. */
+@media (max-width: 1100px) { .render-view { grid-template-columns: 340px 1fr; } .render-log { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .render-view { grid-template-columns: 1fr; } }
+.render-builder, .render-jobs, .render-left { display: flex; flex-direction: column; gap: 12px; }
+.render-log { position: sticky; top: 20px; }
+@media (max-width: 1100px) { .render-log { position: static; } }
 .section { margin: 6px 0 0; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
 
 .builder {
@@ -224,6 +228,9 @@ kbd, .keyhint { font-size: 11px; }
 .range-row { display: flex; align-items: center; gap: 8px; }
 .range-row input { flex: 1; min-width: 0; }
 .range-sep { color: var(--muted); font-size: 13px; }
+.cam-section { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.cam-head { font-size: 12px; color: var(--text); font-weight: 600; }
+.cam-head .hint { font-weight: 400; }
 .override-info { color: #8fd6a0; font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .notice { color: #8fd6a0; font-size: 12px; }
 .save-preset { display: flex; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
@@ -281,8 +288,15 @@ button.secondary:disabled { opacity: 0.5; cursor: default; }
 .job.active { border-color: var(--accent); background: var(--accent-dim); }
 .job-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .job-name { font-weight: 600; font-size: 13px; }
-.job-meta { margin-top: 4px; }
-.job-meta code { color: var(--muted); font-size: 11px; }
+.job-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.job-kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+.job-params { font-size: 12px; color: var(--text); }
+.job-tags { margin-top: 4px; font-size: 11px; color: #8fb3d6; }
+.job-time { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.job-cli { margin-top: 6px; font-size: 11px; }
+.job-cli summary { cursor: pointer; color: var(--muted); list-style: revert; }
+.job-cli code { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; word-break: break-all; }
+.job-actions { display: flex; flex-wrap: wrap; gap: 14px; }
 .job-err { color: #ffb3b3; font-size: 11px; margin-top: 4px; }
 .empty.small { padding: 16px; font-size: 12px; }
 

@@ -118,12 +118,17 @@ def run_spec(run_id: int) -> Optional[Dict[str, Any]]:
         return None
     meta = _read_json(run_dir / "run_metadata.json")
     cfg = _read_json(run_dir / "config_used.json")
-    # config_override = what differed from the defaults at run time.
+    # Diff against the baseline this run was actually built on (snapshotted at
+    # run time), so changing DEFAULT_CONFIG later doesn't retroactively turn a
+    # run's then-default settings into "overrides". Old runs that predate the
+    # snapshot fall back to the current defaults (best effort).
+    base = _read_json(run_dir / "config_base.json") or DEFAULT_CONFIG
+    # config_override = what differed from that baseline at run time.
     override: Dict[str, Any] = {}
     for key, val in cfg.items():
         if key in _SPEC_DENYLIST:
             continue
-        if key not in DEFAULT_CONFIG or _norm(val) != _norm(DEFAULT_CONFIG[key]):
+        if key not in base or _norm(val) != _norm(base[key]):
             override[key] = val
     return {
         "quality": meta.get("quality"),
