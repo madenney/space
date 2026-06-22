@@ -99,6 +99,14 @@ function relTime(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+// The output/outputN number a job produced — run_id when set, else parsed from
+// run_dir (e.g. cancelled jobs that finished physics but never got a run_id).
+function outputNum(job) {
+  if (job.run_id != null) return job.run_id;
+  const m = (job.run_dir || "").match(/output(\d+)\/?$/);
+  return m ? Number(m[1]) : null;
+}
+
 function runDuration(a, b) {
   if (!a || !b) return null;
   const s = (new Date(b).getTime() - new Date(a).getTime()) / 1000;
@@ -170,6 +178,18 @@ export default function JobsPanel({ activeId, onSelect, onOpenRun, onRerun, onCl
     } catch (err) {
       setMsg(`couldn't open Blender: ${err.message}`);
     }
+  }
+
+  async function reusePhysics(job, e) {
+    e.stopPropagation();
+    const n = outputNum(job);
+    if (n == null) return;
+    const fresh = await createJob({
+      physics_from_run_id: n,
+      quality: qualityFor(job.id),
+      name: `${job.name}-rerender`,
+    });
+    onRerun?.(fresh);
   }
 
   async function renderScene(job, e) {
@@ -339,6 +359,35 @@ export default function JobsPanel({ activeId, onSelect, onOpenRun, onRerun, onCl
               <code className="scene-path">{job.scene_path}</code>
             </div>
           )}
+
+          {/* reuse physics: re-render from an existing run's motion data (no re-sim) */}
+          {!job.scene_path &&
+            outputNum(job) != null &&
+            (job.status === "success" || job.status === "cancelled") && (
+              <div className="scene-box reuse">
+                <div className="scene-label">♻ physics ready · output{outputNum(job)}</div>
+                <div className="scene-actions">
+                  <span className="scene-q" onClick={(e) => e.stopPropagation()}>
+                    quality
+                    <select
+                      value={qualityFor(job.id)}
+                      onChange={(e) =>
+                        setSceneQ((m) => ({ ...m, [job.id]: e.target.value }))
+                      }
+                    >
+                      {QUALITIES.map((q) => (
+                        <option key={q} value={q}>
+                          {q}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
+                  <button className="link" onClick={(e) => reusePhysics(job, e)}>
+                    re-render from physics →
+                  </button>
+                </div>
+              </div>
+            )}
           {job.error && <div className="job-err">{job.error}</div>}
         </li>
         );

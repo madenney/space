@@ -107,6 +107,7 @@ class JobRequest(BaseModel):
     name: Optional[str] = None
     prep_scene: bool = False              # -p: build an editable .blend, skip render
     resume_run_id: Optional[int] = None   # -r: render into an existing run
+    physics_from_run_id: Optional[int] = None  # -ph: reuse a run's physics, fresh render
     blender_scene: Optional[str] = None   # -b: render from a .blend
 
 

@@ -117,15 +117,23 @@ def build_args(req: Dict[str, Any]) -> List[str]:
     """Translate a job request into run.py CLI args."""
     args: List[str] = []
     resume = req.get("resume_run_id")
+    physics_from = req.get("physics_from_run_id")
     if resume is not None:
         # Render into an existing run (e.g. from an edited Blender scene); its
         # physics/config are reused, so bodies/seconds don't apply.
         args += ["-r", str(runs.run_dir_for(int(resume)))]
+    if physics_from is not None:
+        # Reuse another run's physics for a fresh render (no re-sim); its config
+        # is pulled in automatically by run.py unless an override is given.
+        args += ["-ph", str(runs.run_dir_for(int(physics_from)))]
     if req.get("quality"):
         args += ["-q", str(req["quality"])]
-    if resume is None and req.get("num_bodies") is not None:
+    # Bodies/seconds describe a new simulation, so they don't apply when we're
+    # reusing existing physics (resume or physics-from).
+    reuse = resume is not None or physics_from is not None
+    if not reuse and req.get("num_bodies") is not None:
         args += ["-n", str(int(req["num_bodies"]))]
-    if resume is None and req.get("seconds") is not None:
+    if not reuse and req.get("seconds") is not None:
         args += ["-t", str(float(req["seconds"]))]
     if req.get("blender_scene"):
         args += ["-b", str(req["blender_scene"])]
@@ -160,7 +168,7 @@ def create_job(req: Dict[str, Any]) -> Dict[str, Any]:
                 k: req.get(k)
                 for k in (
                     "quality", "num_bodies", "seconds", "first_frame", "config_override",
-                    "name", "prep_scene", "resume_run_id", "blender_scene",
+                    "name", "prep_scene", "resume_run_id", "physics_from_run_id", "blender_scene",
                 )
             },
             "status": "pending",

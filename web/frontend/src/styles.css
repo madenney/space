@@ -678,3 +678,7 @@ button.link.cancel:hover { color: #ffb3b3; }
 .arch-ltech { font: 11px ui-monospace, Menlo, monospace; color: #6f7686; display: block; margin: 2px 0 10px; }
 .arch-layer ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 7px; }
 .arch-layer li { font-size: 12.5px; line-height: 1.5; color: #c2c7d3; }
+
+/* reuse-physics box (distinct from the green scene-ready box) */
+.scene-box.reuse { border-color: var(--accent-dim); }
+.scene-box.reuse .scene-label { color: #8fb6ff; }

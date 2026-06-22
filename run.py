@@ -227,6 +227,13 @@ def main():
         if candidate_cfg.exists():
             config_override_path = candidate_cfg
     config = load_config(config_override_path)
+    if args.physics_from and args.config is None:
+        # Reuse the source run's *look* (camera, lights, world) but render with
+        # the CURRENT quality presets — samples/res/fps are render settings and
+        # shouldn't be frozen to whatever the source run was rendered at.
+        config["quality_presets"] = {
+            k: dict(v) for k, v in DEFAULT_CONFIG["quality_presets"].items()
+        }
     if args.stitch:
         run_dir = Path(args.stitch).expanduser()
         if not run_dir.exists():
