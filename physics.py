@@ -236,10 +236,20 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
         frame_rate,
     )
     steps_done = 0
+    # Normalize gravity by total mass so the felt pull is independent of body
+    # count: the per-body acceleration works out to ~gravity_const / r², instead
+    # of ~gravity_const * M_total / r². So adding bodies no longer cranks gravity.
+    total_mass = sum(b.GetMass() for b in bodies) or 1.0
+    g_eff = cfg["gravity_const"] / total_mass
+    logger.info("Gravity normalized: G_const=%.4g / total_mass=%.4g -> g_eff=%.4g",
+                cfg["gravity_const"], total_mass, g_eff)
     log_status(logger, f"Physics steps: 0/{total_phys_steps} | frames: 0/{target_frames}", overwrite=True)
     while frame < target_frames:
         if len(bodies) > 1 and cfg["gravity_const"] > 0:
-            eps = 1e-6
+            # Plummer softening length²: bounds the 1/r² attraction as bodies get
+            # close, so a near-collision can't generate a near-infinite impulse
+            # that blows the whole sim up to infinity.
+            soft_sq = float(cfg.get("gravity_softening", 1.0)) ** 2
             for b in bodies:
                 if hasattr(b, "Empty_forces_accumulators"):
                     b.Empty_forces_accumulators()
@@ -258,12 +268,11 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
                         continue
                     dir_vec = body_j.GetPos() - pi
                     dist_sq = dir_vec.Length2()
-                    if dist_sq < eps:
-                        continue
-                    inv_r = 1.0 / math.sqrt(dist_sq)
+                    # 1/sqrt(r² + ε²): softened inverse distance (never diverges).
+                    inv = 1.0 / math.sqrt(dist_sq + soft_sq)
                     mj = body_j.GetMass()
-                    force_mag = cfg["gravity_const"] * mi * mj * inv_r * inv_r
-                    total_force += dir_vec * (force_mag * inv_r)
+                    force_mag = g_eff * mi * mj * inv * inv
+                    total_force += dir_vec * (force_mag * inv)
                 body_i.Accumulate_force(total_force, pi, False)
 
         sys_chrono.DoStepDynamics(phys_dt)

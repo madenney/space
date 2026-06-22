@@ -6,6 +6,7 @@ import JobBuilder from "./components/JobBuilder.jsx";
 import JobsPanel from "./components/JobsPanel.jsx";
 import LogConsole from "./components/LogConsole.jsx";
 import HotkeysModal from "./components/HotkeysModal.jsx";
+import ArchDiagram from "./components/ArchDiagram.jsx";
 
 // Persisted UI state — survives closing/reopening the tab or browser.
 const UI_KEY = "studio.ui.v1";
@@ -112,6 +113,12 @@ export default function App() {
           >
             render
           </button>
+          <button
+            className={view === "arch" ? "nav-btn active" : "nav-btn"}
+            onClick={() => setView("arch")}
+          >
+            how it works
+          </button>
         </nav>
         <span className="phase-tag">phase 1</span>
         <button className="ghost" onClick={() => setShowHotkeys(true)}>
@@ -170,6 +177,8 @@ export default function App() {
             </aside>
           </div>
         )}
+
+        {view === "arch" && <ArchDiagram />}
       </main>
     </div>
   );

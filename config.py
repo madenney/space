@@ -16,16 +16,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "quality_presets": {
         "low": {"samples": 8, "res_x": 640, "res_y": 360, "fps": 15, "hz": 15, "denoise": False, "mblur": False},
         "high": {"samples": 128, "res_x": 1920, "res_y": 1080, "fps": 30, "hz": 30, "denoise": False, "mblur": False},
-        "final": {"samples": 512, "res_x": 3840, "res_y": 2160, "fps": 60, "hz": 60, "denoise": True, "mblur": False},
+        "final": {"samples": 128, "res_x": 3840, "res_y": 2160, "fps": 60, "hz": 60, "denoise": True, "mblur": False},
     },
 
     # Simulation / physics
     "dynamics_hz": 60,
     "duration_seconds": 1,
-    "gravity_const": 0.0005,
+    # Gravity is normalized by total mass (see physics.py), so this is a
+    # body-count-INDEPENDENT strength: ~500 + spawn speed ~[2,5] gives a bound,
+    # lively swarm at any N. ≳2000 collapses hard enough to destabilize the sim.
+    "gravity_const": 500.0,
+    # Softening length for the N-body attraction: forces are capped as bodies get
+    # within this distance, preventing close-encounter blow-ups. Larger = gentler.
+    "gravity_softening": 1.0,
     "body_density": 1000.0,
     "spawn_sphere_radius": 20.0,
-    "spawn_lin_vel_range": (-15, 15),
+    # Speed MAGNITUDE band (direction randomized). [2,5] balances against
+    # gravity ~500 for a bound, churning swarm rather than a fly-apart cloud.
+    "spawn_lin_vel_range": (2, 5),
     "spawn_ang_vel_range": (-5, 5),
 
     # Bodies / spawning
@@ -41,10 +49,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "camera_radius": 40.0,      # distance from the scene center
     "camera_azimuth": 0.0,      # horizontal angle around the scene (deg); 0 = front
     "camera_elevation": 12.0,   # vertical angle above the horizon (deg)
-    # Make the camera follow the swarm's (mass-weighted) center of gravity: it
-    # keeps a fixed offset/angle and translates with the COG each frame (dolly),
-    # so the cluster stays put in frame. False = static camera at the origin.
+    # Keep the swarm centered: each frame the camera locks onto the densest clump
+    # (robust to escaping bodies, unlike the mass-mean) and translates with it at
+    # a fixed distance/angle — no zoom. False = static camera at origin.
     "camera_track_cog": False,
+    # Smoothing window (seconds) for the tracked target, to de-shake the camera.
+    # Centered/lag-free. 0 = raw (shaky); larger = glassier but less responsive.
+    "camera_smooth_seconds": 0.5,
+    # Drop a small static red cube at world origin (0,0,0) as a visual marker.
+    # Render-only; never in the sim, so it doesn't move or collide.
+    "show_origin_marker": False,
     "ground_size": (40.0, 1.0, 40.0),
     "ground_center": (0.0, -0.5, 0.0),
     "obstacle_configs": [],

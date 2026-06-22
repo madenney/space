@@ -17,9 +17,11 @@ export function rangesEqual(a, b) {
 // Scalar tunables: one config key <-> one form field.
 export const NUMBER_FIELDS = [
   { configKey: "gravity_const", form: "gravity", label: "gravity" },
+  { configKey: "gravity_softening", form: "gravSoft", label: "gravity softening" },
   { configKey: "camera_radius", form: "camDist", label: "cam distance" },
   { configKey: "camera_azimuth", form: "camAz", label: "cam angle" },
   { configKey: "camera_elevation", form: "camElev", label: "cam height" },
+  { configKey: "camera_smooth_seconds", form: "camSmooth", label: "cam smoothing" },
 ];
 
 // Range tunables: one config key (a [min,max] magnitude band) <-> two form fields.
@@ -30,7 +32,8 @@ export const RANGE_FIELDS = [
 
 // Boolean tunables: one config key <-> one checkbox form field.
 export const BOOL_FIELDS = [
-  { configKey: "camera_track_cog", form: "trackCog", label: "follow center of gravity" },
+  { configKey: "camera_track_cog", form: "trackCog", label: "keep swarm centered" },
+  { configKey: "show_origin_marker", form: "originMarker", label: "origin marker" },
 ];
 
 // Blank values for every registered form field.

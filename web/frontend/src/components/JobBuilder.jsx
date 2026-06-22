@@ -223,13 +223,24 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         <div className="group-body">
           <label>
             gravity
-            <span className="hint">pairwise attraction between bodies (default {defaults?.gravity_const ?? "0.0005"})</span>
+            <span className="hint">attraction strength, independent of body count (~500 lively; ≳2000 unstable)</span>
             <input
               type="number"
               step={0.0001}
               min={0}
               value={form.gravity}
               onChange={(e) => set("gravity", e.target.value)}
+            />
+          </label>
+          <label>
+            gravity softening
+            <span className="hint">cushions close encounters so the sim can't blow up (bigger = gentler)</span>
+            <input
+              type="number"
+              step={0.1}
+              min={0}
+              value={form.gravSoft}
+              onChange={(e) => set("gravSoft", e.target.value)}
             />
           </label>
           <label>
@@ -294,7 +305,23 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
               checked={!!form.trackCog}
               onChange={(e) => set("trackCog", e.target.checked)}
             />
-            follow center of gravity <span className="hint">camera moves with the swarm (fixed angle)</span>
+            keep swarm centered <span className="hint">locks onto the densest clump (fixed distance)</span>
+          </label>
+          <label>
+            cam smoothing (s) <span className="hint">de-shakes the tracking; 0 = raw, higher = smoother</span>
+            <input
+              type="number" min={0} step={0.1}
+              value={form.camSmooth}
+              onChange={(e) => set("camSmooth", e.target.value)}
+            />
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={!!form.originMarker}
+              onChange={(e) => set("originMarker", e.target.checked)}
+            />
+            origin marker <span className="hint">static red cube at 0,0,0</span>
           </label>
         </div>
       </details>

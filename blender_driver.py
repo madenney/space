@@ -206,29 +206,39 @@ if frame_start > frame_end:
 total_bodies = len(bodies) if bodies else len(data_keys)
 print(f"Loaded physics data for {{total_bodies}} bodies, {{frames_total}} frames", flush=True)
 
-# Optional: per-frame mass(volume)-weighted centroid, so the camera can track
-# the swarm's center of gravity as it drifts (see the Camera block below).
+# Optional: per-frame tracking target so the camera keeps the swarm centered.
+# We track the DENSEST CLUMP (not the mass-mean / center of gravity): a few
+# bodies flinging outward drag the mass-mean into empty space, so the visible
+# blob ends up off-screen. The clump center (median, refined to the inner half)
+# is robust to those escapees.
 TRACK_COG = {str(bool(cfg_data.get("camera_track_cog", False)))}
-cog_positions = None
+cog_positions = None   # (frames, 3) clump center in Chrono space
 cog_frames = None
 if TRACK_COG and data_keys:
-    _wmap = {{}}
-    for _b in bodies:
-        _d = _b.get("dims", {{}})
-        _s = _b.get("shape")
-        if _s == "sphere":
-            _r = _d.get("radius", 0.5); _v = (4.0 / 3.0) * math.pi * _r ** 3
-        elif _s == "box":
-            _v = _d.get("sx", 1.0) * _d.get("sy", 1.0) * _d.get("sz", 1.0)
-        elif _s == "cylinder":
-            _r = _d.get("radius", 0.5); _h = _d.get("height", _d.get("h", 1.0)); _v = math.pi * _r * _r * _h
-        else:
-            _v = 1.0
-        _wmap[_b.get("name")] = max(_v, 1e-6)
-    _w = np.array([_wmap.get(k, 1.0) for k in data_keys], dtype=float)
     _pos = np.stack([data[k][:, 2:5] for k in data_keys], axis=0)  # (bodies, frames, xyz)
-    cog_positions = (_pos * _w[:, None, None]).sum(axis=0) / _w.sum()  # (frames, xyz)
+    _B, _F, _ = _pos.shape
+    cog_positions = np.zeros((_F, 3))
+    _keep = max(5, _B // 2)
+    for _f in range(_F):
+        _P = _pos[:, _f, :]
+        _m = np.median(_P, axis=0)
+        _dm = np.linalg.norm(_P - _m, axis=1)
+        _inner = _P[np.argsort(_dm)[:_keep]]      # closest half to the median
+        cog_positions[_f] = _inner.mean(axis=0)   # refined clump center
     cog_frames = data[data_keys[0]][:, 0].astype(int)  # frame index per row
+    # Temporal smoothing: the raw clump center jitters frame-to-frame (inner-half
+    # membership flips), making the camera shaky. Average over a short CENTERED
+    # window — lag-free because the whole trajectory is known in advance.
+    _smooth_s = {cfg_data.get("camera_smooth_seconds", 0.5)}
+    _rad = int(round(_smooth_s * frame_rate / 2.0))
+    if _rad >= 1 and cog_positions.shape[0] > 2:
+        _Fc = cog_positions.shape[0]
+        _cs = np.cumsum(np.vstack([np.zeros((1, 3)), cog_positions]), axis=0)
+        _sm = np.empty_like(cog_positions)
+        for _f in range(_Fc):
+            _a = max(0, _f - _rad); _b = min(_Fc, _f + _rad + 1)
+            _sm[_f] = (_cs[_b] - _cs[_a]) / (_b - _a)
+        cog_positions = _sm
 
 def create_anim_mesh(body_def):
 
@@ -538,22 +548,23 @@ if not (scene_loaded and scene_use_camera and scene_camera):
     target = bpy.context.active_object
     target.name = "CameraTarget"
     if cog_positions is not None:
-        # Follow the center of gravity: the camera keeps a FIXED offset and a
-        # FIXED angle relative to the swarm — it translates rigidly with the COG
-        # (like a dolly) and never rotates, so the cluster stays put in frame.
-        cog0 = map_pos(mathutils.Vector((float(cog_positions[0][0]), float(cog_positions[0][1]), float(cog_positions[0][2]))))
-        offset = camera.location - cog0  # frozen camera->COG geometry at frame 0
-        aim = cog0 - camera.location     # set the angle once; never re-aimed
-        if aim.length > 0:
-            camera.rotation_euler = aim.to_track_quat('-Z', 'Y').to_euler()
+        # Lock onto the densest clump positionally: hold a FIXED offset and angle
+        # (from the camera placement) and translate with the clump each frame —
+        # no zoom, distance stays constant. Tracking the clump (not the mass-mean)
+        # keeps the visible blob centered even when stray bodies fly off.
+        cc0 = map_pos(mathutils.Vector((float(cog_positions[0][0]), float(cog_positions[0][1]), float(cog_positions[0][2]))))
+        offset = camera.location - cc0  # frozen camera->clump geometry at frame 0
         for _i in range(len(cog_frames)):
             _c = cog_positions[_i]
-            _cog = map_pos(mathutils.Vector((float(_c[0]), float(_c[1]), float(_c[2]))))
-            camera.location = _cog + offset
+            center = map_pos(mathutils.Vector((float(_c[0]), float(_c[1]), float(_c[2]))))
+            camera.location = center + offset
             camera.keyframe_insert(data_path="location", frame=int(cog_frames[_i]))
-            # DOF focus rides the COG so the cluster stays sharp.
-            target.location = _cog
+            # DOF focus rides the clump so it stays sharp.
+            target.location = center
             target.keyframe_insert(data_path="location", frame=int(cog_frames[_i]))
+        # Constant orientation: the camera always looks along -offset at the clump.
+        if offset.length > 0:
+            camera.rotation_euler = (-offset).to_track_quat('-Z', 'Y').to_euler()
     else:
         # Aim by setting rotation directly instead of a Track-To constraint, so this
         # stays a normal, freely-editable camera: Ctrl+Alt+Numpad0 (align to view)
@@ -563,7 +574,9 @@ if not (scene_loaded and scene_use_camera and scene_camera):
             camera.rotation_euler = aim.to_track_quat('-Z', 'Y').to_euler()
     camera.data.lens = 35
     camera.data.clip_start = 0.1
-    camera.data.clip_end = 100
+    # Large far-clip: swarms can expand to many hundreds of units; empty space has
+    # no z-fighting concerns, so a generous clip keeps far bodies from vanishing.
+    camera.data.clip_end = 5000
     camera.data.dof.focus_object = target
     camera.data.dof.aperture_fstop = 4.0
 
@@ -586,11 +599,55 @@ if not (scene_loaded and scene_use_lights and scene_has_any_lights):
             if direction.length > 0:
                 light.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
 
+# Origin marker: a small static red cube at world origin to mark the center.
+# Purely a render aid — it's never part of the physics sim, so it can't move or
+# collide; bodies just pass through it. Skipped if one is already in the scene.
+SHOW_ORIGIN = {str(bool(cfg_data.get("show_origin_marker", False)))}
+if SHOW_ORIGIN and "OriginMarker" not in bpy.data.objects:
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.0))
+    _marker = bpy.context.active_object
+    _marker.name = "OriginMarker"
+    _mmat = bpy.data.materials.new(name="OriginMarkerMat")
+    _mmat.use_nodes = True
+    _mnodes = _mmat.node_tree.nodes
+    _mnodes.clear()
+    _mbsdf = _mnodes.new("ShaderNodeBsdfPrincipled")
+    _mbsdf.inputs["Base Color"].default_value = (1.0, 0.04, 0.04, 1.0)
+    # Slight self-illumination so it reads as a clear red marker in any lighting.
+    if "Emission Color" in _mbsdf.inputs:
+        _mbsdf.inputs["Emission Color"].default_value = (1.0, 0.04, 0.04, 1.0)
+    if "Emission Strength" in _mbsdf.inputs:
+        _mbsdf.inputs["Emission Strength"].default_value = 1.0
+    _mout = _mnodes.new("ShaderNodeOutputMaterial")
+    _mmat.node_tree.links.new(_mbsdf.outputs["BSDF"], _mout.inputs["Surface"])
+    _marker.data.materials.append(_mmat)
+
 # Render settings
 scene.render.engine = 'CYCLES'
 enable_devices()
 scene.cycles.samples = {preset["samples"]}
 scene.cycles.use_denoising = {str(preset["denoise"]).capitalize()}
+# Fast GPU denoiser when denoising is on; fall back to OpenImageDenoise (CPU-ok).
+try:
+    scene.cycles.denoiser = 'OPTIX'
+except Exception:
+    try:
+        scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+    except Exception:
+        pass
+# --- Animation speedups (apply to every preset) ---
+# 1. Keep the scene/BVH resident between frames — only transforms change, so
+#    re-syncing geometry every frame is pure waste.
+scene.render.use_persistent_data = True
+# 2. Stop sampling pixels that have already converged (huge for empty space).
+scene.cycles.use_adaptive_sampling = True
+scene.cycles.adaptive_threshold = 0.01
+# 3. Opaque bodies in a void don't need deep light paths.
+scene.cycles.max_bounces = 4
+scene.cycles.diffuse_bounces = 2
+scene.cycles.glossy_bounces = 2
+scene.cycles.transmission_bounces = 2
+scene.cycles.volume_bounces = 0
 scene.render.fps = frame_rate
 scene.render.resolution_x = {preset["res_x"]}
 scene.render.resolution_y = {preset["res_y"]}
