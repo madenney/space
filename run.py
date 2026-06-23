@@ -9,7 +9,7 @@ import io
 import numpy as np
 from pathlib import Path
 
-from blender_driver import find_blender, run_blender, write_blender_driver
+from blender_driver import find_blender, prepare_blender_stage, run_blender
 from config import load_config, save_config, DEFAULT_CONFIG
 from logger import setup_logger
 from physics import run_chrono_sim
@@ -395,12 +395,9 @@ def main():
         (run_dir / "run_metadata.json").write_text(json.dumps(chrono_result["metadata"], indent=2))
 
     logger.info("=== Alembic/Render ===")
-    blender_script = write_blender_driver(
+    blender_script, stage_args = prepare_blender_stage(
         run_dir,
-        chrono_result["npz_path"],
-        chrono_result["metadata"],
         quality,
-        frame_rate,
         args.first_frame,
         resume_frame,
         config,
@@ -410,7 +407,7 @@ def main():
         preserve_materials=preserve_materials,
     )
     blender_bin = find_blender(logger, config)
-    run_blender(blender_bin, blender_script, run_dir, logger)
+    run_blender(blender_bin, blender_script, run_dir, logger, stage_args)
     if not args.first_frame and not stop_after_scene:
         run_ffmpeg(run_dir, frame_rate, logger, config)
 

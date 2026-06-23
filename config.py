@@ -56,6 +56,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Smoothing window (seconds) for the tracked target, to de-shake the camera.
     # Centered/lag-free. 0 = raw (shaky); larger = glassier but less responsive.
     "camera_smooth_seconds": 0.5,
+    "camera_lens_mm": 35,
+    "camera_fstop": 4.0,
+    # First-class camera-move spec. None => derive from the flat keys above
+    # (camera_track_cog -> "track", else "static"), preserving old behavior.
+    # Set a dict to author a move; interpreted in blender_stage.py:
+    #   {"mode": "static"}                              fixed placement
+    #   {"mode": "track"}                               fixed offset, follow look_at
+    #   {"mode": "orbit", "orbit_degrees": 360,
+    #    "radius_to": 25, "elevation_to": 40}           turntable (+ optional drift)
+    #   {"mode": "keyframes", "keyframes": [            authored path (spherical)
+    #      {"t": 0, "radius": 70, "azimuth": 0,  "elevation": 8},
+    #      {"t": 6, "radius": 30, "azimuth": 120,"elevation": 30, "ease": "inout"}]}
+    # All modes share the base placement (camera_radius/azimuth/elevation) as the
+    # starting point; orbit/keyframes are positioned RELATIVE to look_at.
+    "camera_move": None,
+    # Where the camera points: "origin" | "clump" (densest swarm) | [x, y, z].
+    # None => "clump" when camera_track_cog else "origin".
+    "camera_look_at": None,
     # Drop a small static red cube at world origin (0,0,0) as a visual marker.
     # Render-only; never in the sim, so it doesn't move or collide.
     "show_origin_marker": False,
