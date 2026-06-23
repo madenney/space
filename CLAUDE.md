@@ -35,7 +35,7 @@ python3 run.py -s output/output5
 python3 index.py add -q final --seconds 10  # Queue job
 python3 index.py w                           # Watch live logs
 python3 index.py m                           # Open most recent frame
-python3 index.py k                           # Kill workers
+python3 index.py k                           # Cancel running + pending jobs
 ```
 
 ## Architecture
@@ -46,9 +46,10 @@ python3 index.py k                           # Kill workers
 
 - **run.py**: Main orchestrator. Creates isolated numbered output directories, handles CLI args, coordinates simulation and rendering
 - **physics.py**: Runs pychrono physics simulation, spawns random bodies (boxes/spheres/cylinders), exports motion data as NPZ
-- **blender_driver.py**: Generates `blender_stage.py` script dynamically, handles Alembic export and Cycles rendering, manages GPU device detection
+- **blender_driver.py**: Locates Blender, copies the static `blender_stage.py` into the run dir, and launches it headless with per-run flags (`-- --run-dir … --quality … [--resume-frame N]`); streams/filters Blender's log
+- **blender_stage.py**: Static (NOT generated) Blender script run inside Blender. Reads the run's own config_used.json / run_metadata.json / NPZ, builds animated meshes, exports+imports Alembic, assembles the scene (materials/world/camera/lights), and renders. Camera is a first-class spec here (`resolve_camera()`: static/track/orbit/keyframes + look_at origin/clump/point)
 - **config.py**: Configuration management with quality presets (low/high/final) and deep merge logic
-- **index.py**: Job queue system with file locking, supports add/status/worker/watch commands
+- **index.py**: Thin terminal client over the web backend's job queue (POSTs to the FastAPI service at $SPACE_API, default :8780). No queue/worker of its own — CLI and web share ONE GPU serialization point. Commands: add/a, status, w (follow log), l (re-run last), k (cancel active), m/p/o (open frame/video/folder)
 - **logger.py**: Unified logging to console and file
 
 ### Output Structure

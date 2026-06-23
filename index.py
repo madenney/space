@@ -1,530 +1,261 @@
 #!/usr/bin/env python3
-"""
-Lightweight job queue for the render pipeline.
+"""Terminal client for the Sim/Render studio.
 
-Usage examples:
-  - Add a job:     python index.py add -q final --seconds 60
-  - Show status:   python index.py status
-  - Run worker:    python index.py worker --loop --poll-interval 10
-    (run the worker in tmux/nohup to keep it alive; it processes one job at a time)
+This is a thin CLI over the web backend's job queue — it does NOT run its own
+queue or worker. Every command talks to the always-on service so there is a
+SINGLE place that serializes the GPU (the studio's worker). Point it elsewhere
+with $SPACE_API (default http://127.0.0.1:8780).
+
+Examples:
+  python index.py add -q final -t 60 -n 300   # queue a render
+  python index.py a -q low -t 4               # 'a' is short for add
+  python index.py                             # status (default)
+  python index.py w                           # follow the active job's log
+  python index.py l -q high                   # re-run the last job, tweaked
+  python index.py k                           # cancel running + pending
+  python index.py m | p | o                   # open last frame | video | folder
 """
 
 import argparse
 import json
 import os
-import signal
 import subprocess
 import sys
-import time
-from datetime import datetime, timezone
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
-
-try:
-    import fcntl  # type: ignore
-except ImportError:  # pragma: no cover - non-posix fallback
-    fcntl = None
-
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent
-QUEUE_DIR = REPO_ROOT / "queue"
-QUEUE_FILE = QUEUE_DIR / "jobs.json"
-LOG_DIR = QUEUE_DIR / "logs"
-LOCK_FILE = QUEUE_DIR / "worker.lock"
 OUTPUT_ROOT = REPO_ROOT / "output"
+API = os.environ.get("SPACE_API", "http://127.0.0.1:8780").rstrip("/")
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+# ---- HTTP to the backend ---------------------------------------------------
+
+def _die_unreachable(exc: Exception) -> None:
+    print(
+        f"Can't reach the studio backend at {API}.\n"
+        f"Is it running?   systemctl --user status space-web\n"
+        f"Or set $SPACE_API to where it lives.\n({exc})",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
-def load_jobs() -> List[Dict]:
-    if not QUEUE_FILE.exists():
-        return []
+def _request(method: str, path: str, body: Optional[dict] = None) -> Any:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        API + path, data=data, method=method,
+        headers={"Content-Type": "application/json"},
+    )
     try:
-        return json.loads(QUEUE_FILE.read_text())
-    except Exception:
-        return []
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode()
+            return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")
+        print(f"{method} {path} -> {exc.code}: {detail}", file=sys.stderr)
+        raise SystemExit(1)
+    except urllib.error.URLError as exc:
+        _die_unreachable(exc)
 
 
-def save_jobs(jobs: List[Dict]) -> None:
-    QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    QUEUE_FILE.write_text(json.dumps(jobs, indent=2))
+def api_get(path: str) -> Any:
+    return _request("GET", path)
 
 
-def next_job_id(jobs: List[Dict]) -> int:
-    if not jobs:
-        return 1
-    return max(job.get("id", 0) for job in jobs) + 1
+def api_post(path: str, body: dict) -> Any:
+    return _request("POST", path, body)
 
 
-def add_job(args_list: List[str], name: Optional[str] = None) -> Dict:
-    jobs = load_jobs()
-    job_id = next_job_id(jobs)
-    job = {
-        "id": job_id,
-        "name": name or f"job-{job_id}",
-        "args": args_list,
-        "status": "pending",
-        "created_at": utc_now(),
-        "started_at": None,
-        "finished_at": None,
-        "returncode": None,
-        "log_path": str(LOG_DIR / f"job_{job_id}.log"),
-        "run_dir": None,
-        "error": None,
-    }
-    jobs.append(job)
-    save_jobs(jobs)
-    return job
+# ---- local helpers (open files on this machine) ----------------------------
 
-
-def print_status(jobs: List[Dict]) -> None:
-    if not jobs:
-        print("No jobs in queue.")
+def _open(path: Path) -> None:
+    if not path.exists():
+        print(f"Not found: {path}")
         return
-    header = f"{'ID':>3}  {'Status':<8}  {'Name':<20}  {'Output':<12}  {'Args'}"
-    print(header)
-    print("-" * len(header))
-    for job in sorted(jobs, key=lambda j: j.get("id", 0)):
-        args = " ".join(job.get("args", []))
-        status = job.get("status", "?")
-        name = job.get("name", "")
-        run_dir = Path(job.get("run_dir", "")).name if job.get("run_dir") else ""
-        print(f"{job.get('id', 0):>3}  {status:<8}  {name:<20}  {run_dir:<12}  {args}")
-
-
-def acquire_lock():
-    if fcntl is None:
-        return None
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fh = LOCK_FILE.open("w")
+    opener = ["open"] if sys.platform == "darwin" else ["xdg-open"]
     try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        fh.write(str(os.getpid()))
-        fh.flush()
-        return fh
-    except BlockingIOError:
-        fh.close()
-        return None
+        subprocess.Popen(opener + [str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"Opening {path}")
+    except Exception as exc:
+        print(f"Failed to open {path}: {exc}", file=sys.stderr)
 
 
-def get_next_pending(jobs: List[Dict]) -> Optional[Dict]:
-    pending = [j for j in jobs if j.get("status") == "pending"]
-    if not pending:
-        return None
-    pending.sort(key=lambda j: (j.get("created_at", ""), j.get("id", 0)))
-    return pending[0]
-
-
-def latest_run_dir() -> Optional[Path]:
+def _latest_run_dir() -> Optional[Path]:
     if not OUTPUT_ROOT.exists():
         return None
     dirs = []
     for child in OUTPUT_ROOT.iterdir():
-        if child.is_dir() and child.name.startswith("output"):
-            suffix = child.name[len("output") :]
-            if suffix.isdigit():
-                dirs.append((int(suffix), child))
-    if not dirs:
-        return None
-    dirs.sort(key=lambda x: x[0], reverse=True)
-    return dirs[0][1]
+        if child.is_dir() and child.name.startswith("output") and child.name[6:].isdigit():
+            dirs.append((int(child.name[6:]), child))
+    return max(dirs, key=lambda x: x[0])[1] if dirs else None
 
 
-def predict_next_run_dir() -> Path:
-    """Predict the next output directory name (outputN) based on existing ones."""
-    highest = 0
-    if OUTPUT_ROOT.exists():
-        for child in OUTPUT_ROOT.iterdir():
-            if child.is_dir() and child.name.startswith("output"):
-                suffix = child.name[len("output") :]
-                if suffix.isdigit():
-                    highest = max(highest, int(suffix))
-    return OUTPUT_ROOT / f"output{highest + 1}"
+# ---- request building (run.py-style flags -> JobRequest) -------------------
+
+def _add_parser(prog: str) -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog=prog, add_help=False)
+    p.add_argument("-q", "--quality")
+    p.add_argument("-n", "--num-bodies", type=int)
+    p.add_argument("-t", "--seconds", type=float)
+    p.add_argument("-f", "--first-frame", action="store_true")
+    p.add_argument("-p", "--prep-scene", action="store_true")
+    p.add_argument("-r", "--resume", type=int, metavar="N", help="resume render of output N")
+    p.add_argument("-ph", "--physics-from", type=int, metavar="N", help="reuse physics from output N")
+    p.add_argument("-b", "--blender-scene")
+    p.add_argument("-c", "--config", help="JSON file merged as a config override")
+    p.add_argument("--name")
+    return p
 
 
-def latest_log() -> Optional[Path]:
-    candidates: List[Path] = []
-    if OUTPUT_ROOT.exists():
-        candidates.extend(p for p in OUTPUT_ROOT.glob("output*/run.log") if p.exists())
-    jobs = load_jobs()
-    for job in jobs:
-        lp = Path(job.get("log_path", ""))
-        if lp.exists():
-            candidates.append(lp)
-    if LOG_DIR.exists():
-        candidates.extend(p for p in LOG_DIR.glob("job_*.log") if p.exists())
-    if not candidates:
-        return None
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates[0]
+def _request_from_args(ns: argparse.Namespace) -> Dict[str, Any]:
+    req: Dict[str, Any] = {}
+    if ns.quality:
+        req["quality"] = ns.quality
+    if ns.num_bodies is not None:
+        req["num_bodies"] = ns.num_bodies
+    if ns.seconds is not None:
+        req["seconds"] = ns.seconds
+    if ns.first_frame:
+        req["first_frame"] = True
+    if ns.prep_scene:
+        req["prep_scene"] = True
+    if ns.resume is not None:
+        req["resume_run_id"] = ns.resume
+    if ns.physics_from is not None:
+        req["physics_from_run_id"] = ns.physics_from
+    if ns.blender_scene:
+        req["blender_scene"] = ns.blender_scene
+    if ns.name:
+        req["name"] = ns.name
+    if ns.config:
+        cfg_path = Path(ns.config)
+        if not cfg_path.exists():
+            print(f"Config file not found: {cfg_path}", file=sys.stderr)
+            raise SystemExit(1)
+        req["config_override"] = json.loads(cfg_path.read_text())
+    return req
 
 
-def watch_log(log_path: Path) -> None:
-    print(f"Watching {log_path} (Ctrl-C to exit)", flush=True)
+# ---- commands --------------------------------------------------------------
+
+def cmd_add(argv: List[str]) -> None:
+    ns = _add_parser("index.py add").parse_args(argv)
+    req = _request_from_args(ns)
+    if not req:
+        print("Nothing to queue. Example: index.py add -q final -t 60 -n 300", file=sys.stderr)
+        raise SystemExit(1)
+    job = api_post("/api/jobs", req)
+    print(f"Queued #{job['id']} ({job.get('status')}): run.py {' '.join(job.get('args', []))}")
+
+
+def cmd_status(_argv: List[str]) -> None:
+    jobs = api_get("/api/jobs") or []
+    if not jobs:
+        print("No jobs.")
+        return
+    hdr = f"{'ID':>3}  {'Status':<10}  {'Name':<22}  {'Output':<10}  Args"
+    print(hdr)
+    print("-" * len(hdr))
+    for j in sorted(jobs, key=lambda x: x.get("id", 0)):
+        out = f"output{j['run_id']}" if j.get("run_id") is not None else ""
+        print(f"{j.get('id', 0):>3}  {j.get('status', '?'):<10}  "
+              f"{(j.get('name') or ''):<22}  {out:<10}  {' '.join(j.get('args', []))}")
+
+
+def cmd_watch(_argv: List[str]) -> None:
+    jobs = api_get("/api/jobs") or []
+    if not jobs:
+        print("No jobs to watch.")
+        return
+    active = next((j for j in jobs if j.get("status") in ("running", "pending")), None)
+    job = active or jobs[0]  # jobs come newest-first
+    print(f"Following #{job['id']} ({job.get('status')}) — Ctrl-C to stop", flush=True)
     try:
-        with log_path.open("r") as fh:
-            cur = ""
-            display_line = ""
-            max_len = 0
-
-            def render() -> None:
-                nonlocal max_len
-                max_len = max(max_len, len(display_line))
-                pad = " " * (max_len - len(display_line))
-                sys.stdout.write("\r" + display_line + pad)
-                sys.stdout.flush()
-
-            def process_chunk(chunk: str) -> None:
-                nonlocal cur, display_line
-                updated = False
-                for ch in chunk:
-                    if ch in ("\r", "\n"):
-                        display_line = cur
-                        cur = ""
-                        updated = True
-                    else:
-                        cur += ch
-                if cur:
-                    display_line = cur
-                    updated = True
-                if updated:
-                    render()
-
-            existing = fh.read()
-            if existing:
-                process_chunk(existing)
-
-            while True:
-                chunk = fh.read(1024)
-                if chunk:
-                    process_chunk(chunk)
-                else:
-                    time.sleep(0.5)
+        with urllib.request.urlopen(f"{API}/api/jobs/{job['id']}/logs") as resp:
+            for raw in resp:
+                line = raw.decode(errors="replace").rstrip("\n")
+                if line.startswith("event: done"):
+                    print("[done]", flush=True)
+                    return
+                if line.startswith("data:"):
+                    print(line[5:].lstrip(), flush=True)
     except KeyboardInterrupt:
         pass
-    except FileNotFoundError:
-        print(f"Log not found: {log_path}", file=sys.stderr)
-    
+    except urllib.error.URLError as exc:
+        _die_unreachable(exc)
 
 
-def update_job(jobs: List[Dict], job: Dict) -> None:
-    for idx, existing in enumerate(jobs):
-        if existing.get("id") == job.get("id"):
-            jobs[idx] = job
-            return
-
-
-def run_job(job: Dict, jobs: List[Dict]) -> None:
-    log_path = Path(job["log_path"])
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    predicted_run_dir = predict_next_run_dir()
-    job["run_dir"] = str(predicted_run_dir)
-    cmd = [sys.executable, str(REPO_ROOT / "run.py"), *job["args"]]
-    job["status"] = "running"
-    job["started_at"] = utc_now()
-    job["error"] = None
-    job["returncode"] = None
-    update_job(jobs, job)
-    save_jobs(jobs)
-    with log_path.open("a") as log:
-        log.write(f"[queue] Starting job {job['id']} at {job['started_at']}\n")
-        log.write(f"[queue] Command: {' '.join(cmd)}\n")
-        log.flush()
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log,
-            stderr=log,
-            text=True,
-            bufsize=1,
-        )
-        rc = proc.wait()
-    job["returncode"] = rc
-    job["finished_at"] = utc_now()
-    job["status"] = "success" if rc == 0 else "failed"
-    # Update run_dir to actual latest if prediction missed
-    latest_dir = latest_run_dir()
-    if latest_dir is not None:
-        job["run_dir"] = str(latest_dir)
-    if rc != 0:
-        job["error"] = f"Process exited with {rc}"
-    update_job(jobs, job)
-    save_jobs(jobs)
-
-
-def worker(loop: bool, poll_interval: int) -> None:
-    lock = acquire_lock()
-    if fcntl and lock is None:
-        print("Another worker is running (lock held).")
+def cmd_last(argv: List[str]) -> None:
+    """Re-queue the most recent job, with optional overriding flags."""
+    jobs = api_get("/api/jobs") or []
+    if not jobs:
+        print("No previous job to re-run.")
         return
-    try:
-        while True:
-            jobs = load_jobs()
-            job = get_next_pending(jobs)
-            if job is None:
-                if loop:
-                    time.sleep(poll_interval)
-                    continue
-                else:
-                    print("No pending jobs. Exiting worker.")
-                    return
-            print(f"Running job {job['id']}: {' '.join(job.get('args', []))}")
-            run_job(job, jobs)
-    finally:
-        if lock:
-            try:
-                lock.close()
-            except Exception:
-                pass
+    base = dict(jobs[0].get("request") or {})  # newest-first
+    base.pop("name", None)
+    if argv:
+        overrides = _request_from_args(_add_parser("index.py l").parse_args(argv))
+        base.update(overrides)
+    job = api_post("/api/jobs", base)
+    print(f"Queued #{job['id']}: run.py {' '.join(job.get('args', []))}")
 
 
-def parse_args(argv: List[str]) -> argparse.Namespace:
-    if not argv:
-        return argparse.Namespace(command="status", name=None, script_args=[])
+def cmd_kill(_argv: List[str]) -> None:
+    jobs = api_get("/api/jobs") or []
+    active = [j for j in jobs if j.get("status") in ("running", "pending")]
+    if not active:
+        print("Nothing running or pending.")
+        return
+    for j in active:
+        api_post(f"/api/jobs/{j['id']}/cancel", {})
+        print(f"Cancelled #{j['id']}")
 
-    # Alias: a -> add
-    argv = list(argv)
-    if argv and argv[0] == "a":
-        argv[0] = "add"
 
-    parser = argparse.ArgumentParser(
-        description="Simple queue runner for run.py",
-        allow_abbrev=False,
-        add_help=False,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
+def cmd_frame(_argv: List[str]) -> None:
+    _open(OUTPUT_ROOT / "most_recent_frame.png")
 
-    add_p = sub.add_parser(
-        "add",
-        help="Add a job to the queue",
-        allow_abbrev=False,
-        add_help=False,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    add_p.add_argument("--name", help="Optional name/label for the job")
 
-    sub.add_parser("status", help="Show job statuses", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    sub.add_parser("m", help="Open most recent frame", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    sub.add_parser("p", help="Play most recent mp4", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    sub.add_parser("o", help="Open output folder", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    l_p = sub.add_parser("l", help="Queue a job using the last run's settings", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    l_p.add_argument(
-        "override_args",
-        nargs=argparse.REMAINDER,
-        help="Optional args to override last settings (e.g. -q high -n 50; use -- to stop parsing if needed)",
-    )
-    sub.add_parser("w", help="Watch latest run log (live)", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+def cmd_video(_argv: List[str]) -> None:
+    run_dir = _latest_run_dir()
+    if run_dir is None:
+        print("No runs yet.")
+        return
+    _open(run_dir / "rendered_frames.mp4")
 
-    sub.add_parser("k", help="Kill all running workers and clear pending", allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    worker_p = sub.add_parser("worker", help=argparse.SUPPRESS, allow_abbrev=False, add_help=False, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    worker_p.add_argument("--loop", action="store_true", help=argparse.SUPPRESS)
-    worker_p.add_argument("--poll-interval", type=int, default=10, help=argparse.SUPPRESS)
+def cmd_folder(_argv: List[str]) -> None:
+    _open(OUTPUT_ROOT)
 
-    if "-h" in argv or "--help" in argv:
-        index_help = parser.format_help().rstrip()
-        try:
-            run_help = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "run.py"), "-h"],
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.strip()
-        except Exception as exc:
-            run_help = f"(Failed to load run.py help: {exc})"
-        print(index_help)
-        print("\nrun.py options:\n")
-        print(run_help)
-        raise SystemExit(0)
 
-    cmd = argv[0]
-    if cmd == "add":
-        add_args, script_args = add_p.parse_known_args(argv[1:])
-        return argparse.Namespace(command="add", name=add_args.name, script_args=script_args)
-    if cmd == "l":
-        # Treat everything after 'l' as override args (for run.py)
-        return argparse.Namespace(command="l", override_args=argv[1:])
-
-    return parser.parse_args(argv)
+COMMANDS = {
+    "add": cmd_add, "a": cmd_add,
+    "status": cmd_status,
+    "w": cmd_watch,
+    "l": cmd_last,
+    "k": cmd_kill,
+    "m": cmd_frame,
+    "p": cmd_video,
+    "o": cmd_folder,
+}
 
 
 def main(argv: List[str]) -> None:
-    # Fast-path for w to avoid argparse quirks in weird shells.
-    if argv and argv[0] == "w":
-        log_path = latest_log()
-        if log_path is None:
-            print(f"No logs found. Searched in {LOG_DIR} and {OUTPUT_ROOT}/output*/run.log")
-            return
-        watch_log(log_path)
+    if not argv:
+        cmd_status([])
         return
-
-    args = parse_args(argv)
-    if args.command == "add":
-        if not args.script_args:
-            raise SystemExit("No args provided for index.py. Example: python queue.py add -q final --seconds 60")
-        job = add_job(args.script_args, args.name)
-        print("Queued.")
-        # Auto-start a detached worker (looping) to process the queue; lock prevents duplicates.
-        try:
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(REPO_ROOT / "index.py"),
-                    "worker",
-                    "--loop",
-                    "--poll-interval",
-                    "5",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception as exc:
-            print(f"Warning: failed to auto-start job: {exc}", file=sys.stderr)
-    elif args.command == "status":
-        print_status(load_jobs())
-    elif args.command == "k":
-        # Kill workers and running jobs (best-effort).
-        killed_any = False
-        for pattern, label in ((f"{Path(__file__).name} worker", "worker"), ("run.py", "job")):
-            try:
-                out = subprocess.check_output(["pgrep", "-f", pattern], text=True)
-                pids = [int(pid) for pid in out.strip().splitlines() if pid.strip().isdigit()]
-            except subprocess.CalledProcessError:
-                pids = []
-            for pid in pids:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    print(f"Sent SIGTERM to {label} pid {pid}")
-                    killed_any = True
-                except Exception as exc:
-                    print(f"Failed to kill pid {pid}: {exc}", file=sys.stderr)
-        if not killed_any:
-            print("No worker/job processes found.")
-        # Drop everything from the queue (all statuses).
-        jobs = load_jobs()
-        total = len(jobs)
-        save_jobs([])
-        if total:
-            print(f"Cleared {total} job(s) from queue.")
-        else:
-            print("Queue was already empty.")
-    elif args.command == "m":
-        target = OUTPUT_ROOT / "most_recent_frame.png"
-        if not target.exists():
-            print(f"Most recent frame not found at {target}")
-            return
-        try:
-            opener = ["open"] if sys.platform == "darwin" else (["xdg-open"] if os.name == "posix" else ["start"])
-            subprocess.Popen(opener + [str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"Opening {target}")
-        except Exception as exc:
-            print(f"Failed to open {target}: {exc}", file=sys.stderr)
-    elif args.command == "p":
-        target = OUTPUT_ROOT / "rendered_frames.mp4"
-        if not target.exists():
-            print(f"Video not found at {target}")
-            return
-        try:
-            opener = ["open"] if sys.platform == "darwin" else (["xdg-open"] if os.name == "posix" else ["start"])
-            subprocess.Popen(opener + [str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"Opening {target}")
-        except Exception as exc:
-            print(f"Failed to open {target}: {exc}", file=sys.stderr)
-    elif args.command == "o":
-        target = OUTPUT_ROOT
-        if not target.exists():
-            print(f"Output folder not found at {target}")
-            return
-        try:
-            opener = ["open"] if sys.platform == "darwin" else (["xdg-open"] if os.name == "posix" else ["start"])
-            subprocess.Popen(opener + [str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"Opening {target}")
-        except Exception as exc:
-            print(f"Failed to open {target}: {exc}", file=sys.stderr)
-    elif args.command == "l":
-        run_dir = latest_run_dir()
-        if run_dir is None:
-            print("No last run found.")
-            return
-        args_list: List[str] = []
-        meta_path = run_dir / "run_metadata.json"
-        meta = {}
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-            except Exception:
-                meta = {}
-        if not meta:
-            # Parse from run.log
-            log_path = run_dir / "run.log"
-            if log_path.exists():
-                try:
-                    for line in log_path.read_text().splitlines():
-                        if "New run directory" in line and "quality=" in line and "duration=" in line and "bodies=" in line:
-                            parts = line.split("quality=")[1]
-                            quality_part, rest = parts.split(",", 1)
-                            duration_part = rest.split("duration=")[1].split("s", 1)[0]
-                            bodies_part = rest.split("bodies=")[1].split(")", 1)[0]
-                            meta["quality"] = quality_part.strip()
-                            meta["duration_seconds"] = float(duration_part)
-                            meta["body_count"] = int(bodies_part)
-                            break
-                except Exception:
-                    meta = {}
-        if not meta:
-            # Try config_used.json
-            cfg_path = run_dir / "config_used.json"
-            if cfg_path.exists():
-                try:
-                    cfg = json.loads(cfg_path.read_text())
-                    meta["quality"] = cfg.get("default_quality")
-                    meta["duration_seconds"] = cfg.get("duration_seconds")
-                    meta["body_count"] = cfg.get("default_body_count")
-                except Exception:
-                    pass
-        if meta.get("quality"):
-            args_list += ["-q", str(meta["quality"])]
-        if meta.get("body_count"):
-            args_list += ["-n", str(meta["body_count"])]
-        if meta.get("duration_seconds"):
-            args_list += ["-t", str(meta["duration_seconds"])]
-        if getattr(args, "override_args", None):
-            args_list += args.override_args
-        if not args_list:
-            print("No usable options found in last run metadata/config.")
-            return
-        job = add_job(args_list, None)
-        print("Queued.")
-        try:
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(REPO_ROOT / "index.py"),
-                    "worker",
-                    "--loop",
-                    "--poll-interval",
-                    "5",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception as exc:
-            print(f"Warning: failed to auto-start worker: {exc}", file=sys.stderr)
-    elif args.command == "w":
-        print("w hit: locating log...", flush=True)
-        log_path = latest_log()
-        if log_path is None:
-            print(f"No logs found. Searched in {LOG_DIR} and {OUTPUT_ROOT}/output*/run.log")
-            return
-        print(f"w streaming: {log_path}", flush=True)
-        watch_log(log_path)
-    elif args.command == "worker":
-        worker(loop=args.loop, poll_interval=args.poll_interval)
-    else:
-        raise SystemExit(f"Unknown command {args.command}")
+    if argv[0] in ("-h", "--help"):
+        print(__doc__)
+        print(f"\nbackend: {API}\ncommands: add(a) status w l k m p o")
+        return
+    cmd = argv[0]
+    fn = COMMANDS.get(cmd)
+    if fn is None:
+        print(f"Unknown command: {cmd}\nTry: add status w l k m p o (or -h)", file=sys.stderr)
+        raise SystemExit(2)
+    fn(argv[1:])
 
 
 if __name__ == "__main__":
