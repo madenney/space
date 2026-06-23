@@ -32,6 +32,22 @@ JOBS_FILE = JOBS_DIR / "jobs.json"
 CONDA_BIN = os.environ.get("CONDA_BIN", "conda")
 CHRONO_ENV = os.environ.get("CHRONO_ENV", "chrono")
 
+# Run each render in its OWN transient systemd scope (a sibling cgroup of this
+# service, not a child) so restarting/stopping the web server never kills an
+# in-flight render. Falls back to a plain child process when systemd-run or the
+# user bus isn't available (e.g. backend run outside the service).
+USE_SCOPE = bool(shutil.which("systemd-run")) and bool(os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
+
+
+def _wrap_in_scope(job_id: int, cmd: List[str]) -> List[str]:
+    if not USE_SCOPE:
+        return cmd
+    return [
+        "systemd-run", "--user", "--scope", "--quiet", "--collect",
+        "--unit", f"space-job-{job_id}",
+        *cmd,
+    ]
+
 _RUN_DIR_RE = re.compile(r"(?:New run directory|Resuming run directory|Reusing physics from):\s*(\S+)")
 
 _lock = threading.Lock()
@@ -193,8 +209,10 @@ def create_job(req: Dict[str, Any]) -> Dict[str, Any]:
 
 def _run(job_id: int, args: List[str]) -> None:
     log_path = Path(_jobs[job_id]["log_path"])
-    cmd = [CONDA_BIN, "run", "--no-capture-output", "-n", CHRONO_ENV,
-           "python", "-u", "run.py", *args]
+    base_cmd = [CONDA_BIN, "run", "--no-capture-output", "-n", CHRONO_ENV,
+                "python", "-u", "run.py", *args]
+    # Wrap in a transient scope so the render outlives a web-server restart.
+    cmd = _wrap_in_scope(job_id, base_cmd)
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
 
     with _lock:
@@ -206,13 +224,17 @@ def _run(job_id: int, args: List[str]) -> None:
     try:
         with log_path.open("w", buffering=1) as logf:
             logf.write(f"[job] $ {' '.join(cmd)}\n")
+            logf.flush()
+            # The render writes straight to the log FILE, not a pipe back to us:
+            # piping its stdout through this process would tie it to the web
+            # server's lifecycle (a restart closes the pipe -> SIGPIPE -> render
+            # dies). With stdout on a file + its own systemd scope, the render is
+            # fully decoupled and survives a backend restart.
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(PROJECT_ROOT),
-                stdout=subprocess.PIPE,
+                stdout=logf,
                 stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
                 env=env,
                 # Own session/process group so cancel can kill the whole tree
                 # (conda run -> python run.py -> blender), not just the wrapper.
@@ -220,12 +242,19 @@ def _run(job_id: int, args: List[str]) -> None:
             )
             with _lock:
                 _procs[job_id] = proc
-            for line in proc.stdout:  # universal-newline: \r progress also yields lines
-                logf.write(line)
-                if run_dir is None:
-                    m = _RUN_DIR_RE.search(line)
-                    if m:
-                        run_dir = m.group(1)
+            # Tail the same file to pick up the run directory while it runs.
+            with log_path.open("r") as reader:
+                while True:
+                    line = reader.readline()
+                    if line:
+                        if run_dir is None:
+                            m = _RUN_DIR_RE.search(line)
+                            if m:
+                                run_dir = m.group(1)
+                    elif proc.poll() is not None:
+                        break
+                    else:
+                        time.sleep(0.3)
             rc = proc.wait()
     except Exception as exc:  # spawn failure, etc.
         with _lock:
@@ -314,7 +343,14 @@ def cancel_job(job_id: int) -> Dict[str, Any]:
             _persist()
             return dict(job)
 
-    # Kill the process group; escalate to SIGKILL if it lingers.
+    # Stop the render. With a transient scope, stopping the unit tears down the
+    # whole render cgroup (conda -> python -> blender); the killpg below is then
+    # a fallback for the systemd-run wrapper / the non-scope path.
+    if USE_SCOPE:
+        subprocess.run(
+            ["systemctl", "--user", "stop", f"space-job-{job_id}.scope"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
     try:
         pgid = os.getpgid(proc.pid)
         os.killpg(pgid, signal.SIGTERM)
