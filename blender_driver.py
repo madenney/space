@@ -10,6 +10,9 @@ from typing import List, Optional, Tuple
 # a per-run generated f-string. It reads a run's config_used.json / metadata /
 # NPZ at runtime and takes a few flags after `--`. See blender_stage.py.
 STAGE_SCRIPT = Path(__file__).resolve().parent / "blender_stage.py"
+# The motion contract module, copied next to the stage so it can `import motion`
+# inside Blender (and the run dir stays self-describing).
+MOTION_MODULE = Path(__file__).resolve().parent / "motion.py"
 
 
 def find_blender(logger, config) -> str:
@@ -55,6 +58,7 @@ def prepare_blender_stage(
     # stage can be re-run by hand: blender -P <run>/blender_stage.py -- --run-dir <run>
     script_dst = run_dir / "blender_stage.py"
     shutil.copyfile(STAGE_SCRIPT, script_dst)
+    shutil.copyfile(MOTION_MODULE, run_dir / "motion.py")
 
     args: List[str] = ["--run-dir", str(run_dir), "--quality", str(quality)]
     if resume_frame:

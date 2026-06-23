@@ -12,7 +12,7 @@ from pathlib import Path
 from blender_driver import find_blender, prepare_blender_stage, run_blender
 from config import load_config, save_config, DEFAULT_CONFIG
 from logger import setup_logger
-from physics import run_chrono_sim
+from scenarios import get_scenario
 
 
 def next_run_dir(base: Path) -> Path:
@@ -381,16 +381,19 @@ def main():
     else:
         preset = config["quality_presets"].get(quality, config["quality_presets"]["high"])
         frame_rate = preset.get("fps", 30)
+        scenario_name = config.get("scenario", "rigid")
         logger.info(
-            "New run directory: %s (quality=%s, duration=%.2fs, bodies=%d)",
+            "New run directory: %s (scenario=%s, quality=%s, duration=%.2fs, bodies=%d)",
             run_dir,
+            scenario_name,
             quality,
             duration_seconds,
             num_bodies,
         )
         os.environ["BODY_COUNT"] = str(num_bodies)
         physics_hz = preset.get("hz", config.get("dynamics_hz", frame_rate))
-        chrono_result = run_chrono_sim(run_dir, logger, duration_seconds, frame_rate, physics_hz, config)
+        scenario = get_scenario(scenario_name)
+        chrono_result = scenario(run_dir, logger, duration_seconds, frame_rate, physics_hz, config)
         chrono_result["metadata"]["quality"] = quality
         (run_dir / "run_metadata.json").write_text(json.dumps(chrono_result["metadata"], indent=2))
 

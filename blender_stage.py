@@ -42,6 +42,10 @@ _p.add_argument("--scene-output", default="", help="optional .blend to save the 
 _args = _p.parse_args(_argv)
 
 run_dir = Path(_args.run_dir).expanduser().resolve()
+# The motion contract module is copied next to this script in the run dir.
+sys.path.insert(0, str(run_dir))
+import motion  # noqa: E402
+
 config = json.loads((run_dir / "config_used.json").read_text())
 metadata = json.loads((run_dir / "run_metadata.json").read_text())
 
@@ -232,15 +236,15 @@ def _interp_keyframes(kfs, t, base_radius, base_az, base_el):
     return field(k, "radius", base_radius), field(k, "azimuth", base_az), field(k, "elevation", base_el)
 
 
-def compute_clump_positions(data, data_keys, frame_rate, smooth_seconds):
+def compute_clump_positions(positions, frame_rate, smooth_seconds):
     """Per-frame densest-clump center (median refined to the inner half, then a
-    centered temporal smooth). Robust to escaping bodies, unlike the mass-mean."""
-    pos = np.stack([data[k][:, 2:5] for k in data_keys], axis=0)  # (bodies, frames, xyz)
-    B, F, _ = pos.shape
+    centered temporal smooth). Robust to escaping bodies, unlike the mass-mean.
+    positions: (F, N, 3) in sim coordinates."""
+    F, B, _ = positions.shape
     out = np.zeros((F, 3))
     keep = max(5, B // 2)
     for f in range(F):
-        P = pos[:, f, :]
+        P = positions[f]
         m = np.median(P, axis=0)
         dm = np.linalg.norm(P - m, axis=1)
         inner = P[np.argsort(dm)[:keep]]      # closest half to the median
@@ -288,29 +292,45 @@ def resolve_camera(config):
 print("=== Alembic export ===", flush=True)
 clear_scene()
 print("Loading physics NPZ...", flush=True)
-data = np.load(str(npy_path))
-data_keys = list(data.files)
 bodies = metadata.get("bodies") or []
-frames_total = 0
-if data_keys:
-    frames_total = int(data[data_keys[0]].shape[0])
+
+# Load into a unified structure-of-arrays for BOTH the new contract (motion.py)
+# and the legacy per-body layout, so the rest of stage 1 is format-agnostic and
+# can keyframe in bulk (foreach_set) instead of a per-frame Python loop.
+_mo = motion.read_motion(npy_path)
+if _mo is not None:
+    all_positions = _mo["positions"]                # (F, N, 3) sim coords
+    orient = _mo["orientations"]                     # (F, N, 4) wxyz, or None
+    frame_numbers = _mo["frame_index"].astype(int)   # (F,)
+elif bodies:
+    _data = np.load(str(npy_path))
+    _keys = [b["name"] for b in bodies]
+    all_positions = np.stack([_data[k][:, 2:5] for k in _keys], axis=1)  # (F, N, 3)
+    orient = np.stack([_data[k][:, 5:9] for k in _keys], axis=1)         # (F, N, 4)
+    frame_numbers = _data[_keys[0]][:, 0].astype(int)                    # (F,)
+else:
+    all_positions = orient = frame_numbers = None
+
+if all_positions is not None:
+    frames_total = int(all_positions.shape[0])
+    total_bodies = int(all_positions.shape[1])
 else:
     frames_total = int(metadata.get("frames", 0) or 0)
-# `frames` in metadata is a count; last keyed frame index is count-1.
+    total_bodies = 0
+# `frames` is a count; last keyed frame index is count-1.
 frame_end = max(frame_start, frames_total - 1)
 if frame_start > frame_end:
     print(f"Nothing to render: start frame {frame_start} exceeds last frame {frame_end}")
     sys.exit(0)
-total_bodies = len(bodies) if bodies else len(data_keys)
 print(f"Loaded physics data for {total_bodies} bodies, {frames_total} frames", flush=True)
 
-# Resolve the camera spec (new `camera`/`camera_move` config or legacy flat keys)
-# and, when it tracks/focuses the swarm, precompute the smoothed per-frame clump
-# center it will follow (densest clump, robust to escaping bodies).
+# Resolve the camera spec and, when it tracks/focuses the swarm, precompute the
+# smoothed per-frame clump center (densest clump, robust to escaping bodies).
 CAM = resolve_camera(config)
-clump_positions = None  # (frames, 3) smoothed clump center in Chrono space
-if CAM["look_at"] == "clump" and data_keys:
-    clump_positions = compute_clump_positions(data, data_keys, frame_rate, CAM["smooth_seconds"])
+clump_positions = None  # (frames, 3) smoothed clump center in sim coords
+if CAM["look_at"] == "clump" and all_positions is not None:
+    clump_positions = compute_clump_positions(all_positions, frame_rate, CAM["smooth_seconds"])
+
 
 def create_anim_mesh(body_def):
 
@@ -346,60 +366,62 @@ def create_anim_mesh(body_def):
     obj.rotation_mode = 'QUATERNION'
     return obj
 
-def _fill_curve(fcurve, frames, values):
-    kps = fcurve.keyframe_points
-    kps.add(len(frames))
-    for i, (f, v) in enumerate(zip(frames, values)):
-        kp = kps[i]
-        kp.co = (float(f), float(v))
-        kp.interpolation = 'LINEAR'
-    kps.update()
+
+# Vectorized sim(Y-up) -> Blender(Z-up) transforms, so keyframes can be set in
+# bulk via foreach_set instead of a per-frame Python loop (the scaling bottleneck).
+_ROT = np.array([math.cos(math.pi / 4), math.sin(math.pi / 4), 0.0, 0.0])  # 90° about X, wxyz
+_ROT_CONJ = _ROT * np.array([1.0, -1.0, -1.0, -1.0])
+
+
+def _qmul(a, b):
+    aw, ax, ay, az = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
+    bw, bx, by, bz = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
+    return np.stack([
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ], axis=-1)
+
+
+def _map_pos_arr(p):   # (F,3): (x,y,z) -> (x,-z,y)
+    return np.stack([p[:, 0], -p[:, 2], p[:, 1]], axis=-1)
+
+
+def _map_quat_arr(q):  # (F,4) wxyz
+    rot = np.broadcast_to(_ROT, q.shape)
+    rotc = np.broadcast_to(_ROT_CONJ, q.shape)
+    return _qmul(_qmul(rot, q), rotc)
+
+
+def _set_fcurves(action, data_path, values):
+    """Bulk-write one keyframe per frame for each component of `values` (F, k)."""
+    fn = frame_numbers.astype(np.float64)
+    nf = values.shape[0]
+    for axis in range(values.shape[1]):
+        fc = action.fcurves.new(data_path=data_path, index=axis)
+        kps = fc.keyframe_points
+        kps.add(nf)
+        co = np.empty(2 * nf, dtype=np.float64)
+        co[0::2] = fn
+        co[1::2] = values[:, axis]
+        kps.foreach_set("co", co)
+        kps.update()
 
 
 anim_objects = []
-if bodies:
+if all_positions is not None and bodies:
     for idx, body_def in enumerate(bodies):
         obj = create_anim_mesh(body_def)
         obj.animation_data_create()
         action = bpy.data.actions.new(name=f"{body_def['name']}_Action")
         obj.animation_data.action = action
-        loc_x = action.fcurves.new(data_path="location", index=0)
-        loc_y = action.fcurves.new(data_path="location", index=1)
-        loc_z = action.fcurves.new(data_path="location", index=2)
-        rot_w = action.fcurves.new(data_path="rotation_quaternion", index=0)
-        rot_x = action.fcurves.new(data_path="rotation_quaternion", index=1)
-        rot_y = action.fcurves.new(data_path="rotation_quaternion", index=2)
-        rot_z = action.fcurves.new(data_path="rotation_quaternion", index=3)
-        arr = data[body_def["name"]]
-        frames = []
-        lx = []
-        ly = []
-        lz = []
-        qw_list = []
-        qx_list = []
-        qy_list = []
-        qz_list = []
-        for frame, _, x, y, z, qw, qx, qy, qz in arr:
-            frame = int(frame)
-            pos_vec = map_pos(mathutils.Vector((x, y, z)))
-            quat = map_quat(mathutils.Quaternion((qw, qx, qy, qz)))
-            frames.append(frame)
-            lx.append(pos_vec.x)
-            ly.append(pos_vec.y)
-            lz.append(pos_vec.z)
-            qw_list.append(quat.w)
-            qx_list.append(quat.x)
-            qy_list.append(quat.y)
-            qz_list.append(quat.z)
-        _fill_curve(loc_x, frames, lx)
-        _fill_curve(loc_y, frames, ly)
-        _fill_curve(loc_z, frames, lz)
-        _fill_curve(rot_w, frames, qw_list)
-        _fill_curve(rot_x, frames, qx_list)
-        _fill_curve(rot_y, frames, qy_list)
-        _fill_curve(rot_z, frames, qz_list)
+        _set_fcurves(action, "location", _map_pos_arr(all_positions[:, idx, :].astype(np.float64)))
+        if orient is not None:
+            _set_fcurves(action, "rotation_quaternion", _map_quat_arr(orient[:, idx, :].astype(np.float64)))
         anim_objects.append(obj)
-        print(f"Keyframed {idx + 1}/{total_bodies} bodies", flush=True)
+        if (idx + 1) % 100 == 0 or (idx + 1) == total_bodies:
+            print(f"Keyframed {idx + 1}/{total_bodies} bodies", flush=True)
 
     # Export Alembic (animated objects only). Alembic is time-based, so the
     # scene fps MUST match the render fps here — otherwise the cache spans the
@@ -611,8 +633,8 @@ if not (scene_loaded and scene_use_camera and scene_camera):
 
     # Frame numbers to author over: every simulated frame, so the .blend scrubs
     # correctly even outside the rendered range. Orbit/keyframe timing spans these.
-    if data_keys:
-        _seq = data[data_keys[0]][:, 0].astype(int)
+    if frame_numbers is not None:
+        _seq = np.asarray(frame_numbers).astype(int)
     else:
         _seq = np.arange(frames_total)
     _f0, _fN = int(_seq[0]), int(_seq[-1])

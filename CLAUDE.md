@@ -44,8 +44,10 @@ python3 index.py k                           # Cancel running + pending jobs
 
 ### Core Components
 
-- **run.py**: Main orchestrator. Creates isolated numbered output directories, handles CLI args, coordinates simulation and rendering
-- **physics.py**: Runs pychrono physics simulation, spawns random bodies (boxes/spheres/cylinders), exports motion data as NPZ
+- **run.py**: Main orchestrator. Creates isolated numbered output directories, handles CLI args, picks the scenario, coordinates simulation and rendering
+- **motion.py**: The motion contract — the single NPZ format both sides agree on. Structure-of-arrays (`positions (F,N,3)`, optional `orientations`, `time`, `frame_index`, optional `ch_<name>` channels), float32, flat/vectorizable. `write_motion()`/`read_motion()`. Extensible: a heat sim just adds a channel. (Legacy runs use an older per-body layout, still readable.)
+- **scenarios.py**: Registry of pluggable sims, each `fn(run_dir, logger, duration, fps, hz, config) -> {npz_path, metadata}`. `rigid` = Chrono rigid bodies + contact + N-body gravity (legacy per-body cache, in physics.py); `gravity` = vectorized NumPy point-particle N-body (no Chrono, no per-pair Python loop → scales to thousands; writes the motion.py contract). Selected by `config["scenario"]`
+- **physics.py**: The `rigid` scenario — pychrono rigid-body sim, spawns random bodies (boxes/spheres/cylinders) with softened N-body gravity, exports the legacy per-body NPZ
 - **blender_driver.py**: Locates Blender, copies the static `blender_stage.py` into the run dir, and launches it headless with per-run flags (`-- --run-dir … --quality … [--resume-frame N]`); streams/filters Blender's log
 - **blender_stage.py**: Static (NOT generated) Blender script run inside Blender. Reads the run's own config_used.json / run_metadata.json / NPZ, builds animated meshes, exports+imports Alembic, assembles the scene (materials/world/camera/lights), and renders. Camera is a first-class spec here (`resolve_camera()`: static/track/orbit/keyframes + look_at origin/clump/point)
 - **config.py**: Configuration management with quality presets (low/high/final) and deep merge logic

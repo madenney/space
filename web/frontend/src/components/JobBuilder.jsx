@@ -23,6 +23,7 @@ const BASE = {
   _orbitDeg: "",
   _radiusTo: "",
   _elevTo: "",
+  _scenario: "", // "" = config default (rigid)
 };
 
 // Handy starting angles (azimuth°, elevation°). Distance is left as-is.
@@ -34,11 +35,11 @@ const CAM_PRESETS = {
   "low / dramatic": { az: 20, elev: -10 },
 };
 
-// Pull the nested camera_move / camera_look_at out of an override `rest` blob
-// into the widget's flat state (so loading a preset/run shows it).
-function splitCameraMove(rest) {
+// Pull non-schema override keys (camera_move/look_at spec + scenario) out of a
+// `rest` blob into the widget's flat state (so loading a preset/run shows them).
+function splitExtras(rest) {
   const r = { ...(rest || {}) };
-  const st = { _moveMode: "", _lookAt: "", _orbitDeg: "", _radiusTo: "", _elevTo: "" };
+  const st = { _moveMode: "", _lookAt: "", _orbitDeg: "", _radiusTo: "", _elevTo: "", _scenario: "" };
   const mv = r.camera_move;
   if (mv && mv.mode) {
     st._moveMode = mv.mode;
@@ -47,13 +48,15 @@ function splitCameraMove(rest) {
     if (mv.elevation_to != null) st._elevTo = mv.elevation_to;
   }
   if (r.camera_look_at) st._lookAt = r.camera_look_at;
+  if (r.scenario) st._scenario = r.scenario;
   delete r.camera_move;
   delete r.camera_look_at;
+  delete r.scenario;
   return { st, rest: Object.keys(r).length ? r : null };
 }
 
-// Widget state -> { camera_move, camera_look_at } override (only when set).
-function buildCameraMove(form) {
+// Widget state -> override extras (camera_move/look_at + scenario), only when set.
+function buildExtras(form) {
   const out = {};
   if (form._moveMode) {
     const m = { mode: form._moveMode };
@@ -65,6 +68,7 @@ function buildCameraMove(form) {
     out.camera_move = m;
   }
   if (form._lookAt) out.camera_look_at = form._lookAt;
+  if (form._scenario) out.scenario = form._scenario;
   return out;
 }
 
@@ -72,6 +76,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
   const [defaults, setDefaults] = useState(null);
   const [fields, setFields] = useState([]); // FIELD_SCHEMA from the backend
   const [camMove, setCamMove] = useState(null); // CAMERA_MOVE_SCHEMA
+  const [scenarioChoices, setScenarioChoices] = useState([]);
   const seededRef = useRef(false);
   const appliedSeed = useRef(-1);
   const [presets, setPresets] = useState([]);
@@ -92,6 +97,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         setDefaults(d);
         setFields(schema);
         setCamMove(s.camera_move || null);
+        setScenarioChoices(s.scenarios || []);
         setForm((f) => {
           const withKeys = { ...blankFields(schema), ...f };
           if (seededRef.current) return withKeys;
@@ -117,7 +123,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     seededRef.current = true;
     setSelectedPreset("");
     const { fields: vals, rest } = splitOverride(seed.config_override, fields);
-    const { st, rest: rest2 } = splitCameraMove(rest);
+    const { st, rest: rest2 } = splitExtras(rest);
     setForm((f) => ({
       ...f,
       quality: seed.quality ?? f.quality,
@@ -144,7 +150,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     const p = presets.find((x) => x.name === name);
     if (!p) return;
     const { fields: vals, rest } = splitOverride(p.config_override, fields);
-    const { st, rest: rest2 } = splitCameraMove(rest);
+    const { st, rest: rest2 } = splitExtras(rest);
     setForm((f) => ({
       ...f,
       quality: p.quality ?? f.quality,
@@ -165,7 +171,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
 
   function mergedOverride() {
     const base = mergeOverride(form, form.config_override, defaults, fields) || {};
-    const merged = { ...base, ...buildCameraMove(form) };
+    const merged = { ...base, ...buildExtras(form) };
     return Object.keys(merged).length ? merged : null;
   }
 
@@ -305,6 +311,17 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
             <div className="preset-info">
               {preset.res_x}×{preset.res_y} · {preset.samples} samples · {preset.fps} fps
             </div>
+          )}
+          {scenarioChoices.length > 0 && (
+            <label>
+              scenario
+              <select value={form._scenario} onChange={(e) => set("_scenario", e.target.value)}>
+                <option value="">default (rigid bodies)</option>
+                {scenarioChoices.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </label>
           )}
           <label>
             bodies

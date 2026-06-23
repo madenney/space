@@ -20,6 +20,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
 
     # Simulation / physics
+    # Which scenario produces the motion (see scenarios.py):
+    #   "rigid"   - Chrono rigid bodies + contact + N-body gravity (legacy cache)
+    #   "gravity" - vectorized NumPy point-particle N-body, scales to thousands
+    "scenario": "rigid",
+    # Render radius range for "gravity" point particles.
+    "particle_radius_range": (0.2, 0.6),
     "dynamics_hz": 60,
     "duration_seconds": 1,
     # Gravity is normalized by total mass (see physics.py), so this is a
@@ -148,6 +154,14 @@ FIELD_SCHEMA = [
      "hint": "locks onto the densest clump at a fixed distance"},
     {"key": "show_origin_marker", "label": "origin marker", "group": "camera", "type": "bool",
      "hint": "static red cube at 0,0,0"},
+]
+
+# Scenarios the studio offers (value must match a key in scenarios.SCENARIOS).
+# Kept here (not imported from scenarios.py) so the web layer can serve it without
+# pulling in numpy/pychrono.
+SCENARIO_CHOICES = [
+    {"value": "rigid", "label": "rigid bodies — Chrono, collisions/fracture"},
+    {"value": "gravity", "label": "gravity particles — fast NumPy, scales to thousands"},
 ]
 
 # The camera move is a nested spec (camera_move / camera_look_at), so it gets a
