@@ -24,8 +24,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     #   "rigid"   - Chrono rigid bodies + contact + N-body gravity (legacy cache)
     #   "gravity" - vectorized NumPy point-particle N-body, scales to thousands
     "scenario": "rigid",
-    # Render radius range for "gravity" point particles.
+    # Render radius range for "gravity"/"collide" point particles.
     "particle_radius_range": (0.2, 0.6),
+    # Soft-sphere collision (the "collide" scenario): stiffer spring = less overlap
+    # but needs the fine internal timestep below; more damping = less bouncy.
+    "collision_stiffness": 20000.0,
+    "collision_damping": 30.0,
+    "collision_physics_hz": 240,
     "dynamics_hz": 60,
     "duration_seconds": 1,
     # Gravity is normalized by total mass (see physics.py), so this is a
@@ -160,8 +165,9 @@ FIELD_SCHEMA = [
 # Kept here (not imported from scenarios.py) so the web layer can serve it without
 # pulling in numpy/pychrono.
 SCENARIO_CHOICES = [
-    {"value": "rigid", "label": "rigid bodies — Chrono, collisions/fracture"},
-    {"value": "gravity", "label": "gravity particles — fast NumPy, scales to thousands"},
+    {"value": "rigid", "label": "rigid bodies — Chrono, true hard collisions (zero overlap)"},
+    {"value": "gravity", "label": "gravity particles — fast, no collisions, scales to thousands"},
+    {"value": "collide", "label": "gravity + collisions — soft-sphere, fast, scales to thousands"},
 ]
 
 # The camera move is a nested spec (camera_move / camera_look_at), so it gets a
