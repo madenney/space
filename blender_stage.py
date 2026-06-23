@@ -317,6 +317,10 @@ if all_positions is not None:
 else:
     frames_total = int(metadata.get("frames", 0) or 0)
     total_bodies = 0
+# Particle scenarios (gravity/collide) render as instanced point clouds instead
+# of N separate objects + Alembic — one mesh instanced over the positions, so
+# thousands of particles stay cheap. Rigid/legacy keep the real-object path.
+PARTICLE_MODE = (metadata.get("scenario") in ("gravity", "collide")) and (all_positions is not None)
 # `frames` is a count; last keyed frame index is count-1.
 frame_end = max(frame_start, frames_total - 1)
 if frame_start > frame_end:
@@ -409,8 +413,82 @@ def _set_fcurves(action, data_path, values):
         kps.update()
 
 
+# --- Particle instancing -----------------------------------------------------
+# Render N particles as vertex-instanced spheres, bucketed by color and size
+# band, so thousands stay cheap (dozens of objects, not N). Positions are driven
+# per-frame by a handler reading all_positions in bulk (foreach_set).
+_PARTICLE_BUCKETS = []  # (parent_mesh, indices) animated each frame
+
+
+def _low_sphere_mesh(radius):
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, segments=12, ring_count=8)
+    o = bpy.context.active_object
+    me = bpy.data.meshes.new_from_object(o)
+    bpy.data.objects.remove(o, do_unlink=True)
+    return me
+
+
+def _particle_frame_handler(scene, depsgraph=None):
+    f0 = int(frame_numbers[0]) if frame_numbers is not None else 0
+    row = int(scene.frame_current) - f0
+    row = 0 if row < 0 else (frames_total - 1 if row >= frames_total else row)
+    snap = all_positions[row]
+    for pm, idx in _PARTICLE_BUCKETS:
+        pm.vertices.foreach_set("co", _map_pos_arr(snap[idx].astype(np.float64)).reshape(-1))
+        pm.update()
+
+
+def build_particle_instances(scene):
+    radii = np.array([b["dims"].get("radius", 0.3) for b in bodies], dtype=np.float64)
+    colors = [tuple(b.get("color", (0.8, 0.8, 0.8))) for b in bodies]
+    by_color = {}
+    for i in range(len(bodies)):
+        by_color.setdefault(colors[i], []).append(i)
+    bands = 4
+    rmin, rmax = float(radii.min()), float(radii.max())
+    bw = (rmax - rmin) / bands + 1e-9
+    snap0 = all_positions[max(0, min(frame_start, frames_total - 1))]
+    nobj = 0
+    for col, idxs in by_color.items():
+        idxs = np.array(idxs)
+        mat = bpy.data.materials.new("ParticleMat")
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (col[0], col[1], col[2], 1.0)
+            bsdf.inputs["Roughness"].default_value = 0.45
+        for band in range(bands):
+            lo = rmin + band * bw
+            last = band == bands - 1
+            in_band = (radii[idxs] >= lo) & (radii[idxs] <= lo + bw + 1e-9) if last else \
+                      (radii[idxs] >= lo) & (radii[idxs] < lo + bw)
+            sel = idxs[in_band]
+            if len(sel) == 0:
+                continue
+            sph = bpy.data.objects.new("particle_sphere", _low_sphere_mesh(float(radii[sel].mean())))
+            sph.data.materials.append(mat)
+            scene.collection.objects.link(sph)
+            pm = bpy.data.meshes.new("particle_points")
+            pm.vertices.add(len(sel))
+            pm.vertices.foreach_set("co", _map_pos_arr(snap0[sel].astype(np.float64)).reshape(-1))
+            pm.update()
+            parent = bpy.data.objects.new("particle_instancer", pm)
+            scene.collection.objects.link(parent)
+            parent.instance_type = 'VERTS'
+            parent.show_instancer_for_render = False
+            sph.parent = parent
+            sph.location = (0, 0, 0)
+            _PARTICLE_BUCKETS.append((pm, sel))
+            nobj += 2
+    bpy.app.handlers.frame_change_pre.append(_particle_frame_handler)
+    print(f"Built {nobj} instancer objects ({len(by_color)} colors x {bands} bands) "
+          f"for {len(bodies)} particles", flush=True)
+
+
 anim_objects = []
-if all_positions is not None and bodies:
+if PARTICLE_MODE:
+    print("Particle mode: instanced point-cloud render, skipping Alembic.", flush=True)
+elif all_positions is not None and bodies:
     for idx, body_def in enumerate(bodies):
         obj = create_anim_mesh(body_def)
         obj.animation_data_create()
@@ -482,7 +560,12 @@ if scene_prepped and scene_alembic_path:
 
 imported_objs = []
 imported_obj_map = {}
-if not skip_alembic_import:
+if PARTICLE_MODE:
+    build_particle_instances(bpy.context.scene)
+    bpy.context.scene.frame_start = frame_start
+    bpy.context.scene.frame_end = frame_end
+    bpy.context.scene.render.fps = frame_rate
+elif not skip_alembic_import:
     # set_frame_range=False: don't let the importer resize the scene range to the
     # cache's time span (which can shrink it on an fps mismatch). We set the
     # range explicitly from the physics frame count.
@@ -511,9 +594,9 @@ def find_imported_body(name):
             return cand
     return bpy.data.objects.get(name)
 
-# Apply materials to imported animated objects
+# Apply materials to imported animated objects (particle mode sets its own).
 preserve_materials = PRESERVE_MATERIALS or scene_prepped
-if not preserve_materials:
+if not preserve_materials and not PARTICLE_MODE:
     for body_def in bodies:
         obj = find_imported_body(body_def["name"])
         if not obj:
