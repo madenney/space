@@ -10,7 +10,7 @@ function Stat({ label, value }) {
   );
 }
 
-export default function RunDetail({ id, onBack, onUseSettings }) {
+export default function RunDetail({ id, onBack, onUseSettings, onResume }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
   const [frameIdx, setFrameIdx] = useState(0);
@@ -58,6 +58,14 @@ export default function RunDetail({ id, onBack, onUseSettings }) {
 
   const sliderPos = Math.max(0, frames.indexOf(frameIdx));
 
+  // An interrupted render: some frames on disk, but not all, and no final video.
+  const incomplete =
+    run.frames_rendered > 0 &&
+    run.frames_total != null &&
+    run.frames_rendered < run.frames_total &&
+    !run.has_video;
+  const framesLeft = incomplete ? run.frames_total - run.frames_rendered : 0;
+
   return (
     <div className="detail">
       <div className="detail-head">
@@ -69,7 +77,19 @@ export default function RunDetail({ id, onBack, onUseSettings }) {
         <button className="ghost use-settings" onClick={onUseSettings}>
           ⎘ use these settings for a new render
         </button>
+        {incomplete && onResume && (
+          <button className="primary resume-btn" onClick={onResume}>
+            ▸ resume render ({framesLeft} frames left)
+          </button>
+        )}
       </div>
+
+      {incomplete && (
+        <div className="banner resume-note">
+          Interrupted render — {run.frames_rendered}/{run.frames_total} frames done.
+          Resume picks up at frame {run.frames_rendered} and renders only what's missing.
+        </div>
+      )}
 
       <div className="detail-grid">
         <div className="viewer">

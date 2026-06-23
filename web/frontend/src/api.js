@@ -58,6 +58,20 @@ export async function openInBlender(run_id) {
   return res.json();
 }
 
+// Open the output folder (or one run's dir) in the host's file manager.
+export async function openFolder(runId) {
+  const res = await fetch("/api/open-folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(runId != null ? { run_id: runId } : {}),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `open folder -> ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function cancelJob(id) {
   const res = await fetch(`/api/jobs/${id}/cancel`, { method: "POST" });
   if (!res.ok) throw new Error(`POST /api/jobs/${id}/cancel -> ${res.status}`);

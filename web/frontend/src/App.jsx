@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchRuns, fetchRunSpec } from "./api.js";
+import { fetchRuns, fetchRunSpec, createJob, openFolder } from "./api.js";
 import RunGallery from "./components/RunGallery.jsx";
 import RunDetail from "./components/RunDetail.jsx";
 import JobBuilder from "./components/JobBuilder.jsx";
@@ -94,6 +94,19 @@ export default function App() {
     }
   }
 
+  // Pick up an interrupted render where it left off (keeps frames on disk;
+  // renders only the missing ones), then jump to the render view to watch it.
+  async function resumeRun(id) {
+    try {
+      const job = await createJob({ resume_run_id: id, name: `output${id}-resume` });
+      onJobSubmitted(job);
+      setSelectedRun(null);
+      setView("render");
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -124,6 +137,19 @@ export default function App() {
         <button className="ghost" onClick={() => setShowHotkeys(true)}>
           ⌨ blender keys
         </button>
+        <button
+          className="ghost"
+          title="Open the output/ folder in the host's file manager"
+          onClick={async () => {
+            try {
+              await openFolder();
+            } catch (e) {
+              setError(e.message);
+            }
+          }}
+        >
+          📂 output
+        </button>
         {view === "gallery" && (
           <button className="ghost" onClick={loadRuns}>
             ↻ refresh
@@ -149,6 +175,7 @@ export default function App() {
               id={selectedRun}
               onBack={() => setSelectedRun(null)}
               onUseSettings={() => useRunSettings(selectedRun)}
+              onResume={() => resumeRun(selectedRun)}
             />
           ))}
 

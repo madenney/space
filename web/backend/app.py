@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
 
@@ -235,6 +236,35 @@ def open_scene(req: OpenSceneRequest) -> dict:
     return {"opened": str(scene)}
 
 
+class OpenFolderRequest(BaseModel):
+    run_id: Optional[int] = None   # open a specific run dir; omit for the output root
+
+
+@app.post("/api/open-folder")
+def open_folder(req: OpenFolderRequest) -> dict:
+    """Open the output folder (or one run's dir) in the host's file manager.
+
+    Local-desktop action: opens on the *host* (belphegor), not the remote
+    browser's machine. Needs the host's graphical session, which the systemd
+    user service inherits (DISPLAY/XAUTHORITY/DBUS).
+    """
+    target = runs.run_dir_for(req.run_id) if req.run_id is not None else runs.OUTPUT_ROOT
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"folder not found: {target}")
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        raise HTTPException(status_code=409, detail="No display available (headless host)")
+    try:
+        subprocess.Popen(
+            ["xdg-open", str(target)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to open folder: {exc}")
+    return {"opened": str(target)}
+
+
 @app.get("/api/runs")
 def get_runs() -> list:
     return runs.list_runs()
@@ -287,3 +317,13 @@ def get_video(run_id: int):
         raise HTTPException(status_code=404, detail="no video")
     # FileResponse honours Range requests, so the <video> element can seek.
     return FileResponse(path, media_type="video/mp4")
+
+
+# ---- Static frontend (always-on serve) ------------------------------------
+# In dev the Vite server on :5173 proxies /api here. For the boot-persistent
+# Tailscale deploy we serve the *built* SPA same-origin, so it's one process on
+# one port. Mounted LAST so it never shadows the /api routes above; html=True
+# serves index.html at "/" and 404s fall back to it for the single-page app.
+_FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")

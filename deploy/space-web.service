@@ -1,0 +1,26 @@
+[Unit]
+Description=Space sim/render studio — FastAPI API + built web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# install-service.sh rewrites %h/Projects/space to this repo's actual location.
+WorkingDirectory=%h/Projects/space/web/backend
+# One process serves the API and the built SPA (web/frontend/dist) on one port,
+# bound to 0.0.0.0 so any Tailscale device on the tailnet can reach it.
+ExecStart=%h/Projects/space/web/backend/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8780
+# Keep the studio up across crashes and reboots.
+Restart=always
+RestartSec=5
+# Render jobs shell out to `conda run -n chrono …`, so conda must be on PATH.
+# install-service.sh rewrites __CONDA_BASE__ to this machine's `conda info --base`.
+Environment=PATH=__CONDA_BASE__/condabin:__CONDA_BASE__/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# KillMode=process: stopping/restarting the web server kills ONLY uvicorn, not
+# the detached render jobs (start_new_session=True) it spawned. This lets us
+# restart for code updates without nuking a multi-hour render in progress.
+KillMode=process
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
