@@ -273,6 +273,14 @@ button.primary {
 }
 button.primary:disabled { opacity: 0.5; cursor: default; }
 
+.resume-btn { margin-left: 8px; }
+.banner.resume-note {
+  background: #2a2410;
+  color: #ffe08a;
+  border: 1px solid #5c4a1a;
+  font-size: 13px;
+}
+
 button.secondary {
   background: var(--panel-2);
   color: var(--text);
@@ -682,3 +690,134 @@ button.link.cancel:hover { color: #ffb3b3; }
 /* reuse-physics box (distinct from the green scene-ready box) */
 .scene-box.reuse { border-color: var(--accent-dim); }
 .scene-box.reuse .scene-label { color: #8fb6ff; }
+
+/* ---- How it works (technical pipeline doc) ---- */
+.hiw { max-width: 1000px; margin: 0 auto; padding: 8px 4px 60px; }
+.hiw-head h2 { margin: 0 0 8px; font-size: 22px; }
+.hiw-head p { color: var(--muted); line-height: 1.6; max-width: 800px; margin: 0 0 4px; }
+.hiw-head code, .hiw p code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--text); }
+
+/* data-flow ribbon */
+.hiw-flow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 20px 0 28px; padding: 14px; background: var(--panel); border-radius: 10px;
+  border: 1px solid #2a2d36;
+}
+.hiw-flow-node { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; background: var(--panel-2); border-radius: 7px; min-width: 0; }
+.hiw-flow-node code { font-size: 12px; color: var(--accent); font-weight: 600; }
+.hiw-flow-node span { font-size: 10.5px; color: var(--muted); }
+.hiw-flow-arrow { color: #4a4f5c; font-size: 14px; }
+
+/* stages */
+.hiw-stages { display: flex; flex-direction: column; }
+.hiw-stage { display: flex; gap: 16px; padding-bottom: 4px; }
+.hiw-rail { display: flex; flex-direction: column; align-items: center; flex: 0 0 36px; }
+.hiw-num {
+  width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--accent-dim); color: var(--accent); font-weight: 700; font-size: 14px; flex: 0 0 auto;
+}
+.hiw-rail::after { content: ""; flex: 1; width: 2px; background: #2a2d36; margin: 6px 0; }
+.hiw-stage:last-child .hiw-rail::after { background: transparent; }
+.hiw-body { flex: 1; padding-bottom: 26px; min-width: 0; }
+.hiw-title { margin: 4px 0 2px; font-size: 16px; }
+.hiw-tool { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--accent); margin-bottom: 8px; }
+.hiw-role { color: var(--text); line-height: 1.6; margin: 0 0 12px; opacity: 0.92; }
+.hiw-section-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 10px 0 5px; }
+.hiw-what { margin: 0; padding-left: 18px; }
+.hiw-what li { color: var(--text); line-height: 1.6; margin-bottom: 6px; opacity: 0.9; font-size: 13.5px; }
+.hiw-meta { margin-top: 12px; display: flex; flex-direction: column; gap: 7px; }
+.hiw-k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-right: 7px; }
+.hiw-file {
+  display: inline-block; font-size: 11.5px; background: var(--panel-2); color: var(--text);
+  padding: 2px 7px; border-radius: 5px; margin: 0 6px 4px 0;
+}
+.hiw-io { font-size: 12px; color: var(--muted); }
+.hiw-io-v { color: var(--text); opacity: 0.85; }
+.hiw-arrow { color: #4a4f5c; margin: 0 10px; }
+
+/* contract stage gets a subtle highlight */
+.hiw-contract .hiw-body { background: var(--panel); border: 1px solid var(--accent-dim); border-radius: 10px; padding: 14px 16px 16px; margin-bottom: 26px; }
+.hiw-contract .hiw-num { background: var(--accent); color: #0b1220; }
+
+/* camera + facts panels */
+.hiw-camera, .hiw-facts {
+  margin-top: 26px; padding: 18px 20px; background: var(--panel); border: 1px solid #2a2d36; border-radius: 10px;
+}
+.hiw-camera h3, .hiw-facts h3 { margin: 0 0 10px; font-size: 16px; }
+.hiw-modes { list-style: none; margin: 0; padding: 0; }
+.hiw-modes li { display: flex; gap: 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #23262e; }
+.hiw-modes li:last-child { border-bottom: none; }
+.hiw-mode { flex: 0 0 86px; color: var(--accent); font-weight: 600; font-size: 12.5px; }
+.hiw-modes span { color: var(--text); opacity: 0.9; line-height: 1.55; font-size: 13.5px; }
+.hiw-note { color: var(--text); opacity: 0.9; line-height: 1.6; margin: 10px 0 0; font-size: 13.5px; }
+.hiw-note strong { color: var(--accent); font-weight: 600; }
+.hiw-code, .hiw pre.hiw-code {
+  background: #0b0c10; border: 1px solid #23262e; border-radius: 7px; padding: 10px 12px; margin: 6px 0 4px;
+  font-size: 12px; color: #cfe0ff; overflow-x: auto; white-space: pre-wrap;
+}
+.hiw-facts dl { margin: 0; display: grid; grid-template-columns: 170px 1fr; gap: 8px 18px; }
+.hiw-facts dt { color: var(--accent); font-weight: 600; font-size: 13px; }
+.hiw-facts dd { margin: 0; color: var(--text); opacity: 0.9; line-height: 1.55; font-size: 13.5px; }
+.hiw-filemap dt code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 12px; color: var(--text); }
+@media (max-width: 640px) { .hiw-facts dl { grid-template-columns: 1fr; gap: 2px 0; } .hiw-facts dt { margin-top: 8px; } }
+
+/* how-it-works: UI annotations + control mapping */
+.hiw-ui {
+  margin-top: 9px; display: flex; gap: 9px; align-items: baseline;
+  background: #14233a; border: 1px solid var(--accent-dim); border-radius: 7px;
+  padding: 7px 10px; font-size: 12.5px; color: var(--text); line-height: 1.5;
+}
+.hiw-ui-tag {
+  flex: 0 0 auto; font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+  background: var(--accent); color: #0b1220; border-radius: 4px; padding: 1px 6px;
+  text-transform: uppercase; position: relative; top: -1px;
+}
+.hiw-controls { margin-top: 26px; padding: 18px 20px; background: var(--panel); border: 1px solid #2a2d36; border-radius: 10px; }
+.hiw-controls h3 { margin: 0 0 10px; font-size: 16px; }
+.hiw-flow-tight { margin: 14px 0 18px; }
+.hiw-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.hiw-table th {
+  text-align: left; color: var(--muted); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 6px 10px; border-bottom: 1px solid #2a2d36; font-weight: 600;
+}
+.hiw-table td { padding: 7px 10px; border-bottom: 1px solid #23262e; color: var(--text); vertical-align: top; line-height: 1.45; }
+.hiw-table tr:last-child td { border-bottom: none; }
+.hiw-table td:first-child { color: var(--text); opacity: 0.95; white-space: nowrap; }
+.hiw-table td code { font-size: 11.5px; color: #cfe0ff; background: var(--panel-2); padding: 1px 6px; border-radius: 4px; }
+.hiw-table td:last-child { color: var(--muted); white-space: nowrap; }
+@media (max-width: 720px) { .hiw-table td:first-child, .hiw-table td:last-child { white-space: normal; } }
+
+/* how-it-works: UI -> code wiring diagram */
+.wire-wrap { margin: 22px 0 26px; padding: 18px 20px; background: var(--panel); border: 1px solid #2a2d36; border-radius: 10px; }
+.wire-wrap h3 { margin: 0 0 10px; font-size: 16px; }
+.wire {
+  position: relative;
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  column-gap: 150px;
+  margin-top: 14px;
+}
+.wire-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 1; color: var(--accent); }
+.wire-line { fill: none; stroke: #3a4256; stroke-width: 1.6; transition: stroke 0.12s, opacity 0.12s; }
+.wire-line.hot { stroke: var(--accent); stroke-width: 2.2; }
+.wire-line.dim { opacity: 0.18; }
+.wire-line.dashed { stroke-dasharray: 4 4; }
+.wire-col { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 6px; }
+.wire-group { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 8px 0 1px; }
+.wire-group:first-child { margin-top: 0; }
+.wire-node {
+  background: var(--panel-2); border: 1px solid #2e323d; border-radius: 7px;
+  padding: 7px 11px; font-size: 12.5px; color: var(--text); cursor: default;
+  transition: border-color 0.12s, opacity 0.12s, background 0.12s;
+}
+.wire-in .wire-node { text-align: left; }
+.wire-out .wire-node { display: flex; flex-direction: column; gap: 1px; }
+.wire-out .wire-node code { font-size: 12px; color: var(--accent); }
+.wire-out .wire-node span { font-size: 10.5px; color: var(--muted); }
+.wire-node.hot { border-color: var(--accent); background: #16243a; }
+.wire-node.dim { opacity: 0.35; }
+@media (max-width: 720px) {
+  .wire { grid-template-columns: 1fr; column-gap: 0; row-gap: 16px; }
+  .wire-svg { display: none; }   /* arrows are meaningless when stacked */
+  .wire-out .wire-node { border-left: 2px solid var(--accent-dim); }
+}
