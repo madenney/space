@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 import runs
 import jobmanager
 import presets
-from config import DEFAULT_CONFIG
+from config import DEFAULT_CONFIG, FIELD_SCHEMA, CAMERA_MOVE_SCHEMA
 
 app = FastAPI(title="Sim/Render Pipeline API", version="0.1.0")
 
@@ -95,6 +95,13 @@ def healthz() -> JSONResponse:
 def config_defaults() -> dict:
     """Resolved default config — used to seed the job-builder forms."""
     return DEFAULT_CONFIG
+
+
+@app.get("/api/config/fields")
+def config_fields() -> dict:
+    """Schema of editable tunables — the builder renders its form from this, so
+    config keys/labels live in one place (config.py) instead of the frontend."""
+    return {"fields": FIELD_SCHEMA, "camera_move": CAMERA_MOVE_SCHEMA}
 
 
 # ---- Jobs -----------------------------------------------------------------

@@ -821,3 +821,7 @@ button.link.cancel:hover { color: #ffb3b3; }
   .wire-svg { display: none; }   /* arrows are meaningless when stacked */
   .wire-out .wire-node { border-left: 2px solid var(--accent-dim); }
 }
+
+/* builder: camera-move widget */
+.cam-move { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 4px; display: flex; flex-direction: column; gap: 10px; }
+.cam-move-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }

@@ -29,6 +29,14 @@ export async function fetchDefaults() {
   return res.json();
 }
 
+// Editable-field schema (the builder renders its form from this). Source of
+// truth is config.py · FIELD_SCHEMA. Returns { fields, camera_move }.
+export async function fetchFields() {
+  const res = await fetch("/api/config/fields");
+  if (!res.ok) throw new Error(`GET /api/config/fields -> ${res.status}`);
+  return res.json();
+}
+
 export async function createJob(payload) {
   const res = await fetch("/api/jobs", {
     method: "POST",

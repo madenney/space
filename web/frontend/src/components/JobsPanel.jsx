@@ -85,7 +85,7 @@ function jobSummary(req) {
 function overrideTags(req) {
   const o = req?.config_override;
   if (!o) return [];
-  return Object.keys(o).map(overrideLabel);
+  return Object.keys(o).map((k) => overrideLabel(k));
 }
 
 function relTime(iso) {

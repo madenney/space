@@ -114,6 +114,61 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+# Single source of truth for the tunables the studio builder exposes. The web UI
+# renders its form from this (served at /api/config/fields) instead of hardcoding
+# the same keys/labels — so adding a knob is ONE entry here next to its default.
+#   type: "number" -> scalar; "range" -> a [min,max] magnitude band; "bool"
+#   group: which builder section it appears under
+FIELD_SCHEMA = [
+    # Physics
+    {"key": "gravity_const", "label": "gravity", "group": "physics", "type": "number",
+     "step": 0.0001, "min": 0,
+     "hint": "attraction strength, independent of body count (~500 lively; ≳2000 unstable)"},
+    {"key": "gravity_softening", "label": "gravity softening", "group": "physics", "type": "number",
+     "step": 0.1, "min": 0,
+     "hint": "cushions close encounters so the sim can't blow up (bigger = gentler)"},
+    {"key": "spawn_lin_vel_range", "label": "move speed", "group": "physics", "type": "range",
+     "step": 0.5, "min": 0, "hint": "initial linear speed range (min → max)"},
+    {"key": "spawn_ang_vel_range", "label": "spin speed", "group": "physics", "type": "range",
+     "step": 0.5, "min": 0, "hint": "initial angular speed range (min → max)"},
+    # Camera
+    {"key": "camera_radius", "label": "distance", "group": "camera", "type": "number",
+     "step": 1, "min": 1, "hint": "how far back the camera sits"},
+    {"key": "camera_azimuth", "label": "azimuth°", "group": "camera", "type": "number",
+     "step": 5, "hint": "spin around the scene (0 = front)"},
+    {"key": "camera_elevation", "label": "elevation°", "group": "camera", "type": "number",
+     "step": 5, "hint": "height angle (− below, + above)"},
+    {"key": "camera_smooth_seconds", "label": "cam smoothing (s)", "group": "camera", "type": "number",
+     "step": 0.1, "min": 0, "hint": "de-shakes clump tracking; 0 = raw, higher = smoother"},
+    {"key": "camera_lens_mm", "label": "lens (mm)", "group": "camera", "type": "number",
+     "step": 1, "min": 1, "hint": "focal length; lower = wider"},
+    {"key": "camera_fstop", "label": "f-stop", "group": "camera", "type": "number",
+     "step": 0.1, "min": 0.1, "hint": "depth of field; lower = blurrier background"},
+    {"key": "camera_track_cog", "label": "keep swarm centered", "group": "camera", "type": "bool",
+     "hint": "locks onto the densest clump at a fixed distance"},
+    {"key": "show_origin_marker", "label": "origin marker", "group": "camera", "type": "bool",
+     "hint": "static red cube at 0,0,0"},
+]
+
+# The camera move is a nested spec (camera_move / camera_look_at), so it gets a
+# dedicated widget rather than a flat field. This describes the modes and their
+# parameters so the UI can render them from data too.
+CAMERA_MOVE_SCHEMA = {
+    "look_at": {"label": "look at", "options": ["clump", "origin"]},
+    "modes": [
+        {"mode": "static", "label": "static (fixed)", "params": []},
+        {"mode": "track", "label": "track (follow look-at)", "params": []},
+        {"mode": "orbit", "label": "orbit (turntable)", "params": [
+            {"key": "orbit_degrees", "label": "sweep°", "step": 15, "default": 360},
+            {"key": "radius_to", "label": "end distance", "step": 1, "optional": True},
+            {"key": "elevation_to", "label": "end height°", "step": 5, "optional": True},
+        ]},
+        {"mode": "keyframes", "label": "keyframes (authored)", "params": [],
+         "note": "author waypoints in config_override for now"},
+    ],
+}
+
+
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     for key, val in override.items():
         if isinstance(val, dict) and isinstance(base.get(key), dict):

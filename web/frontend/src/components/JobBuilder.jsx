@@ -1,20 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchDefaults, createJob, fetchPresets, savePreset } from "../api.js";
+import { fetchDefaults, fetchFields, createJob, fetchPresets, savePreset } from "../api.js";
 import {
   blankFields,
   fieldsFromDefaults,
   splitOverride,
   mergeOverride,
+  rangeMin,
+  rangeMax,
 } from "../fields.js";
 
-const BLANK = {
+// Top-level request fields (not config_override) + camera-move widget state.
+const BASE = {
   name: "",
   quality: "low",
   num_bodies: 5,
   seconds: 1,
-  ...blankFields(), // gravity / move+spin speed / camera fields (see fields.js)
   first_frame: false,
   config_override: null,
+  // camera-move widget (nested camera_move / camera_look_at spec)
+  _moveMode: "",
+  _lookAt: "",
+  _orbitDeg: "",
+  _radiusTo: "",
+  _elevTo: "",
 };
 
 // Handy starting angles (azimuth°, elevation°). Distance is left as-is.
@@ -26,12 +34,49 @@ const CAM_PRESETS = {
   "low / dramatic": { az: 20, elev: -10 },
 };
 
+// Pull the nested camera_move / camera_look_at out of an override `rest` blob
+// into the widget's flat state (so loading a preset/run shows it).
+function splitCameraMove(rest) {
+  const r = { ...(rest || {}) };
+  const st = { _moveMode: "", _lookAt: "", _orbitDeg: "", _radiusTo: "", _elevTo: "" };
+  const mv = r.camera_move;
+  if (mv && mv.mode) {
+    st._moveMode = mv.mode;
+    if (mv.orbit_degrees != null) st._orbitDeg = mv.orbit_degrees;
+    if (mv.radius_to != null) st._radiusTo = mv.radius_to;
+    if (mv.elevation_to != null) st._elevTo = mv.elevation_to;
+  }
+  if (r.camera_look_at) st._lookAt = r.camera_look_at;
+  delete r.camera_move;
+  delete r.camera_look_at;
+  return { st, rest: Object.keys(r).length ? r : null };
+}
+
+// Widget state -> { camera_move, camera_look_at } override (only when set).
+function buildCameraMove(form) {
+  const out = {};
+  if (form._moveMode) {
+    const m = { mode: form._moveMode };
+    if (form._moveMode === "orbit") {
+      if (form._orbitDeg !== "") m.orbit_degrees = Number(form._orbitDeg);
+      if (form._radiusTo !== "") m.radius_to = Number(form._radiusTo);
+      if (form._elevTo !== "") m.elevation_to = Number(form._elevTo);
+    }
+    out.camera_move = m;
+  }
+  if (form._lookAt) out.camera_look_at = form._lookAt;
+  return out;
+}
+
 export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
   const [defaults, setDefaults] = useState(null);
+  const [fields, setFields] = useState([]); // FIELD_SCHEMA from the backend
+  const [camMove, setCamMove] = useState(null); // CAMERA_MOVE_SCHEMA
   const seededRef = useRef(false);
+  const appliedSeed = useRef(-1);
   const [presets, setPresets] = useState([]);
   const [selectedPreset, setSelectedPreset] = useState("");
-  const [form, setForm] = useState(BLANK);
+  const [form, setForm] = useState(BASE);
   const [presetName, setPresetName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -39,42 +84,53 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
 
   const loadPresets = () => fetchPresets().then(setPresets).catch(() => {});
 
+  // Load defaults + the field schema together.
   useEffect(() => {
-    fetchDefaults()
-      .then((d) => {
+    Promise.all([fetchDefaults(), fetchFields()])
+      .then(([d, s]) => {
+        const schema = s.fields || [];
         setDefaults(d);
-        // Don't clobber a cloned-in seed with the plain defaults.
-        if (seededRef.current) return;
-        setForm((f) => ({
-          ...f,
-          quality: d.default_quality ?? f.quality,
-          num_bodies: d.default_body_count ?? f.num_bodies,
-          seconds: d.duration_seconds ?? f.seconds,
-          ...fieldsFromDefaults(f, d),
-        }));
+        setFields(schema);
+        setCamMove(s.camera_move || null);
+        setForm((f) => {
+          const withKeys = { ...blankFields(schema), ...f };
+          if (seededRef.current) return withKeys;
+          return {
+            ...withKeys,
+            quality: d.default_quality ?? withKeys.quality,
+            num_bodies: d.default_body_count ?? withKeys.num_bodies,
+            seconds: d.duration_seconds ?? withKeys.seconds,
+            ...fieldsFromDefaults(withKeys, d, schema),
+          };
+        });
       })
       .catch((e) => setError(e.message));
     loadPresets();
   }, []);
 
-  // Populate the form from a previous job/run ("use as template").
+  // Populate from a previous job/run ("use as template"). Re-runs once the
+  // schema is available if the seed arrived first.
   useEffect(() => {
-    if (!seed) return;
+    if (!seed || !fields.length) return;
+    if (appliedSeed.current === seedNonce) return;
+    appliedSeed.current = seedNonce;
     seededRef.current = true;
     setSelectedPreset("");
-    const { fields, rest } = splitOverride(seed.config_override);
+    const { fields: vals, rest } = splitOverride(seed.config_override, fields);
+    const { st, rest: rest2 } = splitCameraMove(rest);
     setForm((f) => ({
       ...f,
       quality: seed.quality ?? f.quality,
       num_bodies: seed.num_bodies ?? f.num_bodies,
       seconds: seed.seconds ?? f.seconds,
-      ...fields,
+      ...vals,
+      ...st,
       first_frame: seed.first_frame ?? false,
-      config_override: rest,
+      config_override: rest2,
       name: seed.name ? `${seed.name}-copy` : f.name,
     }));
     setNotice("loaded settings from a previous render — tweak and hit render");
-  }, [seedNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [seedNonce, fields]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -87,30 +143,30 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     }
     const p = presets.find((x) => x.name === name);
     if (!p) return;
-    const { fields, rest } = splitOverride(p.config_override);
+    const { fields: vals, rest } = splitOverride(p.config_override, fields);
+    const { st, rest: rest2 } = splitCameraMove(rest);
     setForm((f) => ({
       ...f,
       quality: p.quality ?? f.quality,
       num_bodies: p.num_bodies ?? f.num_bodies,
       seconds: p.seconds ?? f.seconds,
-      ...fields,
+      ...vals,
+      ...st,
       first_frame: p.first_frame ?? f.first_frame,
-      config_override: rest,
+      config_override: rest2,
     }));
   }
 
-  // Set azimuth/elevation from a named angle preset (leaves distance alone).
   function applyCamPreset(name) {
     const p = CAM_PRESETS[name];
     if (!p) return;
-    setForm((f) => ({ ...f, camAz: p.az, camElev: p.elev }));
+    setForm((f) => ({ ...f, camera_azimuth: p.az, camera_elevation: p.elev }));
   }
 
-  // Fold the gravity field back into config_override. Only include it when it
-  // differs from its default, so an untouched value stays implicit. The field
-  // <-> config-key mapping lives in fields.js (single source of truth).
   function mergedOverride() {
-    return mergeOverride(form, form.config_override, defaults);
+    const base = mergeOverride(form, form.config_override, defaults, fields) || {};
+    const merged = { ...base, ...buildCameraMove(form) };
+    return Object.keys(merged).length ? merged : null;
   }
 
   function payload(extra) {
@@ -160,9 +216,57 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
     }
   }
 
+  // Render one schema field (number / range / bool) by descriptor.
+  function Field(fld) {
+    if (fld.type === "bool") {
+      return (
+        <label className="checkbox" key={fld.key}>
+          <input
+            type="checkbox"
+            checked={!!form[fld.key]}
+            onChange={(e) => set(fld.key, e.target.checked)}
+          />
+          {fld.label} {fld.hint && <span className="hint">{fld.hint}</span>}
+        </label>
+      );
+    }
+    if (fld.type === "range") {
+      return (
+        <label key={fld.key}>
+          {fld.label} {fld.hint && <span className="hint">{fld.hint}</span>}
+          <div className="range-row">
+            <input
+              type="number" min={fld.min} step={fld.step}
+              value={form[rangeMin(fld.key)] ?? ""}
+              onChange={(e) => set(rangeMin(fld.key), e.target.value)}
+            />
+            <span className="range-sep">→</span>
+            <input
+              type="number" min={fld.min} step={fld.step}
+              value={form[rangeMax(fld.key)] ?? ""}
+              onChange={(e) => set(rangeMax(fld.key), e.target.value)}
+            />
+          </div>
+        </label>
+      );
+    }
+    return (
+      <label key={fld.key}>
+        {fld.label} {fld.hint && <span className="hint">{fld.hint}</span>}
+        <input
+          type="number" min={fld.min} step={fld.step}
+          value={form[fld.key] ?? ""}
+          onChange={(e) => set(fld.key, e.target.value)}
+        />
+      </label>
+    );
+  }
+
+  const groupFields = (g) => fields.filter((f) => f.group === g);
   const qualities = defaults ? Object.keys(defaults.quality_presets || {}) : ["low"];
   const preset = defaults?.quality_presets?.[form.quality];
   const overrideKeys = form.config_override ? Object.keys(form.config_override) : [];
+  const orbitParams = camMove?.modes?.find((m) => m.mode === "orbit")?.params || [];
 
   return (
     <form className="builder" onSubmit={(e) => run({}, e)}>
@@ -176,14 +280,12 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         >
           <option value="">preset…</option>
           {presets.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name}
-            </option>
+            <option key={p.name} value={p.name}>{p.name}</option>
           ))}
         </select>
       </div>
 
-      {/* Basics — the essentials, open by default */}
+      {/* Basics */}
       <details className="group" open>
         <summary>Basics</summary>
         <div className="group-body">
@@ -195,9 +297,7 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
             quality
             <select value={form.quality} onChange={(e) => set("quality", e.target.value)}>
               {qualities.map((q) => (
-                <option key={q} value={q}>
-                  {q}
-                </option>
+                <option key={q} value={q}>{q}</option>
               ))}
             </select>
           </label>
@@ -217,64 +317,13 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         </div>
       </details>
 
-      {/* Physics — collapsed; tweak the simulation flavor */}
+      {/* Physics — rendered from the schema */}
       <details className="group">
         <summary>Physics</summary>
-        <div className="group-body">
-          <label>
-            gravity
-            <span className="hint">attraction strength, independent of body count (~500 lively; ≳2000 unstable)</span>
-            <input
-              type="number"
-              step={0.0001}
-              min={0}
-              value={form.gravity}
-              onChange={(e) => set("gravity", e.target.value)}
-            />
-          </label>
-          <label>
-            gravity softening
-            <span className="hint">cushions close encounters so the sim can't blow up (bigger = gentler)</span>
-            <input
-              type="number"
-              step={0.1}
-              min={0}
-              value={form.gravSoft}
-              onChange={(e) => set("gravSoft", e.target.value)}
-            />
-          </label>
-          <label>
-            move speed <span className="hint">initial linear speed range (min → max)</span>
-            <div className="range-row">
-              <input
-                type="number" min={0} step={0.5}
-                value={form.linMin} onChange={(e) => set("linMin", e.target.value)}
-              />
-              <span className="range-sep">→</span>
-              <input
-                type="number" min={0} step={0.5}
-                value={form.linMax} onChange={(e) => set("linMax", e.target.value)}
-              />
-            </div>
-          </label>
-          <label>
-            spin speed <span className="hint">initial angular speed range (min → max)</span>
-            <div className="range-row">
-              <input
-                type="number" min={0} step={0.5}
-                value={form.angMin} onChange={(e) => set("angMin", e.target.value)}
-              />
-              <span className="range-sep">→</span>
-              <input
-                type="number" min={0} step={0.5}
-                value={form.angMax} onChange={(e) => set("angMax", e.target.value)}
-              />
-            </div>
-          </label>
-        </div>
+        <div className="group-body">{groupFields("physics").map(Field)}</div>
       </details>
 
-      {/* Camera — collapsed; applies to new prep / render jobs */}
+      {/* Camera — schema fields + angle presets + the move widget */}
       <details className="group">
         <summary>Camera</summary>
         <div className="group-body">
@@ -287,55 +336,61 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
               ))}
             </select>
           </label>
-          <label>
-            distance <span className="hint">how far back (default {defaults?.camera_radius ?? 40})</span>
-            <input type="number" min={1} step={1} value={form.camDist} onChange={(e) => set("camDist", e.target.value)} />
-          </label>
-          <label>
-            azimuth° <span className="hint">spin around the scene (0 = front)</span>
-            <input type="number" step={5} value={form.camAz} onChange={(e) => set("camAz", e.target.value)} />
-          </label>
-          <label>
-            elevation° <span className="hint">height angle (− below, + above)</span>
-            <input type="number" step={5} value={form.camElev} onChange={(e) => set("camElev", e.target.value)} />
-          </label>
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={!!form.trackCog}
-              onChange={(e) => set("trackCog", e.target.checked)}
-            />
-            keep swarm centered <span className="hint">locks onto the densest clump (fixed distance)</span>
-          </label>
-          <label>
-            cam smoothing (s) <span className="hint">de-shakes the tracking; 0 = raw, higher = smoother</span>
-            <input
-              type="number" min={0} step={0.1}
-              value={form.camSmooth}
-              onChange={(e) => set("camSmooth", e.target.value)}
-            />
-          </label>
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={!!form.originMarker}
-              onChange={(e) => set("originMarker", e.target.checked)}
-            />
-            origin marker <span className="hint">static red cube at 0,0,0</span>
-          </label>
+          {groupFields("camera").map(Field)}
+
+          {/* Camera move (nested camera_move / camera_look_at spec) */}
+          {camMove && (
+            <div className="cam-move">
+              <div className="cam-move-title">camera move</div>
+              <label>
+                motion
+                <select value={form._moveMode} onChange={(e) => set("_moveMode", e.target.value)}>
+                  <option value="">default (from “keep centered”)</option>
+                  {camMove.modes.map((m) => (
+                    <option key={m.mode} value={m.mode}>{m.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {camMove.look_at.label}
+                <select value={form._lookAt} onChange={(e) => set("_lookAt", e.target.value)}>
+                  <option value="">default</option>
+                  {camMove.look_at.options.map((o) => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
+              </label>
+              {form._moveMode === "orbit" &&
+                orbitParams.map((p) => (
+                  <label key={p.key}>
+                    {p.label} {p.optional && <span className="hint">optional</span>}
+                    <input
+                      type="number" step={p.step}
+                      value={form[p.key === "orbit_degrees" ? "_orbitDeg" : p.key === "radius_to" ? "_radiusTo" : "_elevTo"] ?? ""}
+                      placeholder={p.default != null ? String(p.default) : ""}
+                      onChange={(e) =>
+                        set(p.key === "orbit_degrees" ? "_orbitDeg" : p.key === "radius_to" ? "_radiusTo" : "_elevTo", e.target.value)
+                      }
+                    />
+                  </label>
+                ))}
+              {form._moveMode === "keyframes" && (
+                <div className="hint">authored waypoints: set camera_move.keyframes via a preset/override</div>
+              )}
+            </div>
+          )}
         </div>
       </details>
 
       {overrideKeys.length > 0 && (
         <div className="override-info">
-          + override: {overrideKeys.map((k) => `${k}=${form.config_override[k]}`).join(", ")}
+          + override: {overrideKeys.map((k) => `${k}=${JSON.stringify(form.config_override[k])}`).join(", ")}
         </div>
       )}
 
       {error && <div className="banner error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      {/* Actions — always visible */}
       <div className="builder-actions">
         <label className="checkbox">
           <input type="checkbox" checked={form.first_frame} onChange={(e) => set("first_frame", e.target.checked)} />
@@ -358,7 +413,6 @@ export default function JobBuilder({ onSubmitted, seed, seedNonce }) {
         </div>
       </div>
 
-      {/* Save preset — collapsed; out of the way until needed */}
       <details className="group">
         <summary>Save as preset</summary>
         <div className="group-body">
