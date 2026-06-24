@@ -264,6 +264,11 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
     # Plummer softening length²: bounds the 1/r² attraction as bodies get close,
     # so a near-collision can't generate a near-infinite impulse and blow up.
     soft_sq = float(cfg.get("gravity_softening", 1.0)) ** 2
+    # Stability cap: hard limit on per-body speed. A degenerate high-speed contact
+    # can otherwise slingshot a body to escape speed, blow up in the next contact,
+    # and (via the all-pairs gravity sum) turn every body NaN in one step. 0 = off.
+    max_speed = float(cfg.get("max_body_speed", 0.0))
+    max_speed_sq = max_speed * max_speed
     log_status(logger, f"Physics steps: 0/{total_phys_steps} | frames: 0/{target_frames}", overwrite=True)
     while frame < target_frames:
         if gravity_on:
@@ -286,6 +291,9 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
             np.fill_diagonal(inv, 0.0)                            # no self-force
             w = (g_eff * masses_np[:, None] * masses_np[None, :] * inv)[:, :, None]
             forces = (w * diff).sum(axis=1)                       # (N,3) net force per body
+            # Backstop: scrub any non-finite force so a single bad body can't
+            # poison every other body through the sum above on the next step.
+            np.nan_to_num(forces, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
             for i, body_i in enumerate(bodies):
                 fi = forces[i]
                 body_i.Accumulate_force(
@@ -293,6 +301,13 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
                     body_i.GetPos(), False)
 
         sys_chrono.DoStepDynamics(phys_dt)
+        if max_speed > 0.0:
+            for b in bodies:
+                v = b.GetPos_dt()
+                sp2 = v.x * v.x + v.y * v.y + v.z * v.z
+                if sp2 > max_speed_sq:
+                    s = max_speed / math.sqrt(sp2)
+                    b.SetPos_dt(chrono.ChVectorD(v.x * s, v.y * s, v.z * s))
         sim_time += phys_dt
         steps_done += 1
         log_status(logger, f"Physics steps: {steps_done}/{total_phys_steps} | frames: {frame}/{target_frames}", overwrite=True)

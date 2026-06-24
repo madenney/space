@@ -49,6 +49,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Softening length for the N-body attraction: forces are capped as bodies get
     # within this distance, preventing close-encounter blow-ups. Larger = gentler.
     "gravity_softening": 1.0,
+    # Hard cap on per-body speed (sim units/sec); 0 = off. A safety net against a
+    # degenerate high-speed contact slingshotting a body to escape speed and then
+    # blowing the whole sim to NaN through the all-pairs gravity sum.
+    "max_body_speed": 0.0,
     "body_density": 1000.0,
     "spawn_sphere_radius": 20.0,
     # Speed MAGNITUDE band (direction randomized). [2,5] balances against
