@@ -27,6 +27,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     #   "rigid"   - Chrono rigid bodies + contact + N-body gravity (legacy cache)
     #   "gravity" - vectorized NumPy point-particle N-body, scales to thousands
     "scenario": "rigid",
+    # Render rigid bodies via Geometry-Nodes instancing (real shapes + rotation +
+    # size, O(buckets) objects) instead of N real objects + per-frame fcurves +
+    # Alembic. Required above ~1k bodies, where the real-object path OOMs. The
+    # real-object path stays the default so the editable-.blend/Alembic workflow
+    # is unaffected for small scenes.
+    "render_instanced": False,
     # Render radius range for "gravity"/"collide" point particles.
     "particle_radius_range": (0.2, 0.6),
     # Soft-sphere collision (the "collide" scenario): stiffer spring = less overlap

@@ -321,6 +321,12 @@ else:
 # of N separate objects + Alembic — one mesh instanced over the positions, so
 # thousands of particles stay cheap. Rigid/legacy keep the real-object path.
 PARTICLE_MODE = (metadata.get("scenario") in ("gravity", "collide")) and (all_positions is not None)
+# Rigid bodies via instancing too (config render_instanced), but the rotation-
+# capable Geometry-Nodes path: real shapes + per-body rotation + size, O(buckets)
+# objects. Scales to thousands where the real-object + Alembic path OOMs.
+INSTANCED_RIGID = bool(config.get("render_instanced")) and (not PARTICLE_MODE) and (all_positions is not None)
+# Either instanced path skips the per-object + Alembic build and sets its own materials.
+INSTANCED = PARTICLE_MODE or INSTANCED_RIGID
 # `frames` is a count; last keyed frame index is count-1.
 frame_end = max(frame_start, frames_total - 1)
 if frame_start > frame_end:
@@ -485,9 +491,157 @@ def build_particle_instances(scene):
           f"for {len(bodies)} particles", flush=True)
 
 
+# --- Rotation-capable instancing (rigid) -------------------------------------
+# Real Blender objects + per-frame fcurves + Alembic don't scale: thousands of
+# bodies x thousands of frames is ~hundreds of millions of keyframes held in RAM
+# (OOM). Vertex instancing scales but a vertex stores only a position, so it
+# can't carry rotation or per-body shape. Geometry-Nodes "Instance on Points"
+# keeps the cheap bulk-array update AND reads per-point attributes, so we drive
+# position (vertex co), rotation (euler attr), and size (scale attr) each frame
+# as a few vectorized writes. Bucketed by (shape, color): a unit master mesh per
+# shape carries the color material; per-body dims become a non-uniform scale.
+_RIGID_BUCKETS = []  # (point_mesh, indices) animated each frame
+
+
+def _quat_to_euler_xyz(q):
+    """(N,4) wxyz quaternion -> (N,3) Blender 'XYZ' euler (radians), vectorized.
+    Matches mathutils.Quaternion.to_euler('XYZ') (validated to ~1e-6)."""
+    w, x, y, z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    # Rotation-matrix elements (row-major R[r][c]) needed for Blender's 'XYZ'
+    # decomposition (derived from eulO_to_mat3, order XYZ).
+    r00 = 1.0 - 2.0 * (y * y + z * z)
+    r10 = 2.0 * (x * y + w * z)
+    r20 = 2.0 * (x * z - w * y)
+    r21 = 2.0 * (y * z + w * x)
+    r22 = 1.0 - 2.0 * (x * x + y * y)
+    # ay = asin(-r20), ax = atan2(r21, r22), az = atan2(r10, r00).
+    ay = np.arcsin(np.clip(-r20, -1.0, 1.0))
+    ax = np.arctan2(r21, r22)
+    az = np.arctan2(r10, r00)
+    # Gimbal lock (|r20|~1 => cos(y)~0): ax/az degenerate; fold rotation into az.
+    lock = np.abs(r20) > 0.99999
+    if np.any(lock):
+        r01 = 2.0 * (x * y - w * z)
+        r11 = 1.0 - 2.0 * (x * x + z * z)
+        ax = np.where(lock, 0.0, ax)
+        az = np.where(lock, np.arctan2(-r01, r11), az)
+    return np.stack([ax, ay, az], axis=-1)
+
+
+def _unit_master_mesh(shape):
+    """Unit-size master mesh for a shape; per-body dims are applied as scale."""
+    if shape == "box":
+        bpy.ops.mesh.primitive_cube_add(size=1.0)            # extent 1 per axis
+    elif shape == "cylinder":
+        bpy.ops.mesh.primitive_cylinder_add(radius=1.0, depth=1.0, vertices=16)
+    else:  # sphere
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, segments=16, ring_count=10)
+    o = bpy.context.active_object
+    me = bpy.data.meshes.new_from_object(o)
+    bpy.data.objects.remove(o, do_unlink=True)
+    return me
+
+
+def _body_scale(body_def):
+    """Non-uniform scale that turns a unit master into this body's real size."""
+    d = body_def["dims"]
+    if body_def["shape"] == "box":
+        return (d["sx"], d["sy"], d["sz"])
+    if body_def["shape"] == "cylinder":
+        return (d["radius"], d["radius"], d["height"])
+    r = d.get("radius", 0.3)
+    return (r, r, r)
+
+
+def _instance_node_group(master_obj):
+    """Geometry-nodes tree: instance master_obj on the incoming points, reading
+    per-point 'rot' (euler) and 'pscale' (scale) attributes."""
+    ng = bpy.data.node_groups.new("RigidInstancer", "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+    ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+    nodes, links = ng.nodes, ng.links
+    gin = nodes.new("NodeGroupInput")
+    gout = nodes.new("NodeGroupOutput")
+    iop = nodes.new("GeometryNodeInstanceOnPoints")
+    info = nodes.new("GeometryNodeObjectInfo")
+    info.inputs["Object"].default_value = master_obj
+    info.transform_space = 'ORIGINAL'
+    rot = nodes.new("GeometryNodeInputNamedAttribute"); rot.data_type = 'FLOAT_VECTOR'
+    rot.inputs["Name"].default_value = "rot"
+    scl = nodes.new("GeometryNodeInputNamedAttribute"); scl.data_type = 'FLOAT_VECTOR'
+    scl.inputs["Name"].default_value = "pscale"
+    links.new(gin.outputs["Geometry"], iop.inputs["Points"])
+    links.new(info.outputs["Geometry"], iop.inputs["Instance"])
+    links.new(rot.outputs["Attribute"], iop.inputs["Rotation"])
+    links.new(scl.outputs["Attribute"], iop.inputs["Scale"])
+    links.new(iop.outputs["Instances"], gout.inputs["Geometry"])
+    return ng
+
+
+def build_rigid_instances(scene):
+    """Instanced render of real rigid bodies: full shape + rotation + size, but
+    O(buckets) objects instead of O(N) — so it scales like the particle path."""
+    colors = [tuple(round(c, 3) for c in b.get("color", (0.8, 0.8, 0.8))) for b in bodies]
+    shapes = [b["shape"] for b in bodies]
+    scales = np.array([_body_scale(b) for b in bodies], dtype=np.float64)
+    snap0 = all_positions[max(0, min(frame_start, frames_total - 1))]
+    buckets, masters = {}, {}
+    for i in range(len(bodies)):
+        buckets.setdefault((shapes[i], colors[i]), []).append(i)
+
+    nobj = 0
+    for (shape, col), idxs in buckets.items():
+        idx = np.array(idxs)
+        if shape not in masters:
+            masters[shape] = _unit_master_mesh(shape)
+        mat = bpy.data.materials.new("RigidMat")
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (col[0], col[1], col[2], 1.0)
+            bsdf.inputs["Roughness"].default_value = 0.45
+        # Hidden master carrying this bucket's mesh + color (instances inherit it).
+        master = bpy.data.objects.new(f"master_{shape}_{nobj}", masters[shape].copy())
+        master.data.materials.append(mat)
+        scene.collection.objects.link(master)
+        master.hide_render = master.hide_viewport = True
+        # Point cloud: one vertex per body, with rot + pscale attributes.
+        pm = bpy.data.meshes.new("rigid_points")
+        pm.vertices.add(len(idx))
+        pm.vertices.foreach_set("co", _map_pos_arr(snap0[idx].astype(np.float64)).reshape(-1))
+        a_rot = pm.attributes.new("rot", 'FLOAT_VECTOR', 'POINT')
+        a_scl = pm.attributes.new("pscale", 'FLOAT_VECTOR', 'POINT')
+        a_scl.data.foreach_set("vector", scales[idx].reshape(-1))
+        pm.update()
+        pts = bpy.data.objects.new(f"rigid_instancer_{nobj}", pm)
+        scene.collection.objects.link(pts)
+        gn = pts.modifiers.new("instancer", 'NODES')
+        gn.node_group = _instance_node_group(master)
+        _RIGID_BUCKETS.append((pm, idx))
+        nobj += 1
+    bpy.app.handlers.frame_change_pre.append(_rigid_frame_handler)
+    print(f"Built {nobj} rigid instancers ({len(masters)} shapes x colors) "
+          f"for {len(bodies)} bodies", flush=True)
+
+
+def _rigid_frame_handler(scene, depsgraph=None):
+    f0 = int(frame_numbers[0]) if frame_numbers is not None else 0
+    row = int(scene.frame_current) - f0
+    row = 0 if row < 0 else (frames_total - 1 if row >= frames_total else row)
+    snap = all_positions[row]
+    qsnap = orient[row] if orient is not None else None
+    for pm, idx in _RIGID_BUCKETS:
+        pm.vertices.foreach_set("co", _map_pos_arr(snap[idx].astype(np.float64)).reshape(-1))
+        if qsnap is not None:
+            eul = _quat_to_euler_xyz(_map_quat_arr(qsnap[idx].astype(np.float64)))
+            pm.attributes["rot"].data.foreach_set("vector", eul.reshape(-1))
+        pm.update()
+
+
 anim_objects = []
-if PARTICLE_MODE:
-    print("Particle mode: instanced point-cloud render, skipping Alembic.", flush=True)
+if INSTANCED:
+    print(f"Instanced mode ({'particles' if PARTICLE_MODE else 'rigid'}): "
+          "point-cloud render, skipping Alembic.", flush=True)
 elif all_positions is not None and bodies:
     for idx, body_def in enumerate(bodies):
         obj = create_anim_mesh(body_def)
@@ -560,8 +714,11 @@ if scene_prepped and scene_alembic_path:
 
 imported_objs = []
 imported_obj_map = {}
-if PARTICLE_MODE:
-    build_particle_instances(bpy.context.scene)
+if INSTANCED:
+    if PARTICLE_MODE:
+        build_particle_instances(bpy.context.scene)
+    else:
+        build_rigid_instances(bpy.context.scene)
     bpy.context.scene.frame_start = frame_start
     bpy.context.scene.frame_end = frame_end
     bpy.context.scene.render.fps = frame_rate
@@ -596,7 +753,7 @@ def find_imported_body(name):
 
 # Apply materials to imported animated objects (particle mode sets its own).
 preserve_materials = PRESERVE_MATERIALS or scene_prepped
-if not preserve_materials and not PARTICLE_MODE:
+if not preserve_materials and not INSTANCED:
     for body_def in bodies:
         obj = find_imported_body(body_def["name"])
         if not obj:
