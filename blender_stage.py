@@ -738,22 +738,49 @@ if not (scene_loaded and scene_use_camera and scene_camera):
     # with it (constant distance & angle) — matches the prior clump-dolly.
     _track_offset = _base_vec - _look_target(_f0)
 
-    # "fit": auto-framing. Distance scales with the cloud's per-frame spread so the
-    # swarm stays a consistent size in frame whether it's exploded huge or collapsed
-    # tiny. Precompute a smoothed distance per frame (cheap: reuses the positions).
+    # "fit"/"pushin": distance scales with the cloud's per-frame spread.
+    #   fit    - keep the swarm a consistent size (auto-framing) throughout.
+    #   pushin - wide (fit) until the cloud hits max expansion, then dolly IN onto
+    #            the clump so it fills the frame up close as it collapses.
+    # Precompute a smoothed per-frame distance (cheap: reuses the positions).
     _fit_dir = _spherical(1.0, _base_az, _base_el)  # unit viewing direction
     _fit_by_frame = None
-    if _mode == "fit" and all_positions is not None:
-        _fit_scale = float(_move.get("fit_scale", config.get("camera_fit_scale", 3.5)))
+    if _mode in ("fit", "pushin") and all_positions is not None:
         _pct = float(_move.get("fit_percentile", config.get("camera_fit_percentile", 90)))
         _min_d = float(_move.get("min_distance", config.get("camera_fit_min_distance", 8.0)))
-        _raw = np.empty(len(_seq))
+        # Per-frame cloud radius: a framing radius (percentile, to frame most bodies)
+        # and a robust bulk radius (median) used for peak detection — the median
+        # ignores escapees that keep flying out after the bulk has turned around.
+        _radii = np.empty(len(_seq))
+        _bulk = np.empty(len(_seq))
         for _i in range(len(_seq)):
             _fn = int(_seq[_i])
             _c = _look_target(_fn)
             _P = all_positions[min(max(_fn, 0), frames_total - 1)]
             _d = np.linalg.norm(_P - np.array([_c.x, _c.y, _c.z]), axis=1)
-            _raw[_i] = max(_min_d, _fit_scale * float(np.percentile(_d, _pct)))
+            _radii[_i] = float(np.percentile(_d, _pct))
+            _bulk[_i] = float(np.median(_d))
+        _wide = float(_move.get("fit_scale", config.get("camera_fit_scale", 3.5)))
+        if _mode == "fit":
+            _scales = np.full(len(_seq), _wide)
+        else:
+            # Hold wide until the BULK peaks, then ease the framing down to `close`
+            # so the camera dives in on the (collapsing) clump.
+            _close = float(_move.get("close_scale", config.get("camera_pushin_close_scale", 1.5)))
+            _peak = int(np.argmax(_bulk))
+            _scales = np.empty(len(_seq))
+            for _i in range(len(_seq)):
+                if _i <= _peak:
+                    _scales[_i] = _wide
+                else:
+                    _p = (_i - _peak) / max(1, len(_seq) - 1 - _peak)
+                    _scales[_i] = _wide + (_close - _wide) * (_p * _p * (3 - 2 * _p))  # smoothstep
+            print(f"Push-in camera: peak expansion at frame {int(_seq[_peak])} "
+                  f"(radius {_radii[_peak]:.0f}); framing x{_wide} -> x{_close}", flush=True)
+        # fit frames everything (percentile); pushin frames the dense bulk (median)
+        # so the dive-in lands tight on the clump, letting escapees drift off-frame.
+        _frame_r = _radii if _mode == "fit" else _bulk
+        _raw = np.maximum(_min_d, _scales * _frame_r)
         # Smooth the distance over the camera window (centered, lag-free).
         _r = int(round(CAM["smooth_seconds"] * frame_rate / 2.0))
         if _r >= 1 and len(_raw) > 2:
@@ -769,7 +796,7 @@ if not (scene_loaded and scene_use_camera and scene_camera):
         """Camera position in Chrono space for a frame, per the move mode."""
         if _mode == "static":
             return _base_vec
-        if _mode == "fit" and _fit_by_frame is not None:
+        if _mode in ("fit", "pushin") and _fit_by_frame is not None:
             return _look_target(fnum) + _fit_dir * _fit_by_frame.get(int(fnum), _base_radius)
         if _mode == "track":
             return _look_target(fnum) + _track_offset

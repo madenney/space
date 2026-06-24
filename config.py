@@ -78,6 +78,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "camera_fit_scale": 3.5,
     "camera_fit_percentile": 90,
     "camera_fit_min_distance": 8.0,
+    # "pushin" camera: wide (fit_scale) until peak expansion, then ease the framing
+    # down to close_scale so the camera dives in on the collapsing clump.
+    "camera_pushin_close_scale": 1.5,
     # First-class camera-move spec. None => derive from the flat keys above
     # (camera_track_cog -> "track", else "static"), preserving old behavior.
     # Set a dict to author a move; interpreted in blender_stage.py:
@@ -190,6 +193,10 @@ CAMERA_MOVE_SCHEMA = {
         {"mode": "track", "label": "track (follow look-at)", "params": []},
         {"mode": "fit", "label": "auto-fit (frame the whole cloud)", "params": [
             {"key": "fit_scale", "label": "fit zoom", "step": 0.5, "default": 3.5},
+        ]},
+        {"mode": "pushin", "label": "push-in (wide, then zoom to the clump at peak)", "params": [
+            {"key": "fit_scale", "label": "wide zoom", "step": 0.5, "default": 3.5},
+            {"key": "close_scale", "label": "close zoom", "step": 0.5, "default": 1.5},
         ]},
         {"mode": "orbit", "label": "orbit (turntable)", "params": [
             {"key": "orbit_degrees", "label": "sweep°", "step": 15, "default": 360},
