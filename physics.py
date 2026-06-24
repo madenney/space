@@ -185,7 +185,14 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
         lin_low, lin_high = sorted(abs(v) for v in cfg["spawn_lin_vel_range"])
         ang_low, ang_high = sorted(abs(v) for v in cfg["spawn_ang_vel_range"])
         if lin_high > 0:
-            ldir = random_dir()
+            if cfg.get("spawn_velocity_mode", "random") == "radial":
+                # Coherent outward kick (an explosion): velocity points away from
+                # the center, so a bound cloud blows out then falls back.
+                px, py, pz = pos_tuple
+                pn = math.sqrt(px * px + py * py + pz * pz) or 1.0
+                ldir = (px / pn, py / pn, pz / pn)
+            else:
+                ldir = random_dir()
             lmag = random.uniform(lin_low, lin_high)
             body.SetPos_dt(chrono.ChVectorD(ldir[0] * lmag, ldir[1] * lmag, ldir[2] * lmag))
         else:
@@ -243,13 +250,15 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
     g_eff = cfg["gravity_const"] / total_mass
     logger.info("Gravity normalized: G_const=%.4g / total_mass=%.4g -> g_eff=%.4g",
                 cfg["gravity_const"], total_mass, g_eff)
+    # Static masses for the vectorized gravity (masses don't change during the sim).
+    masses_np = np.array([b.GetMass() for b in bodies], dtype=float)
+    gravity_on = len(bodies) > 1 and cfg["gravity_const"] > 0
+    # Plummer softening length²: bounds the 1/r² attraction as bodies get close,
+    # so a near-collision can't generate a near-infinite impulse and blow up.
+    soft_sq = float(cfg.get("gravity_softening", 1.0)) ** 2
     log_status(logger, f"Physics steps: 0/{total_phys_steps} | frames: 0/{target_frames}", overwrite=True)
     while frame < target_frames:
-        if len(bodies) > 1 and cfg["gravity_const"] > 0:
-            # Plummer softening length²: bounds the 1/r² attraction as bodies get
-            # close, so a near-collision can't generate a near-infinite impulse
-            # that blows the whole sim up to infinity.
-            soft_sq = float(cfg.get("gravity_softening", 1.0)) ** 2
+        if gravity_on:
             for b in bodies:
                 if hasattr(b, "Empty_forces_accumulators"):
                     b.Empty_forces_accumulators()
@@ -259,21 +268,21 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
                     # Fallback: zero forces/torques directly
                     b.SetForce(chrono.ChVectorD(0, 0, 0))
                     b.SetTorque(chrono.ChVectorD(0, 0, 0))
+            # Same softened N-body force as the old O(N²) Python loop —
+            # F_i = Σ_j g_eff·mᵢmⱼ (r_j-r_i)/(r²+ε²)^1.5 — but computed in NumPy
+            # (one C-level pass) instead of a per-pair interpreter loop. The
+            # contact solver below (DoStepDynamics) is untouched.
+            pos_np = np.array([(p.x, p.y, p.z) for p in (b.GetPos() for b in bodies)])
+            diff = pos_np[None, :, :] - pos_np[:, None, :]        # (N,N,3) r_j - r_i
+            inv = (np.square(diff).sum(-1) + soft_sq) ** -1.5     # (N,N) 1/(r²+ε²)^1.5
+            np.fill_diagonal(inv, 0.0)                            # no self-force
+            w = (g_eff * masses_np[:, None] * masses_np[None, :] * inv)[:, :, None]
+            forces = (w * diff).sum(axis=1)                       # (N,3) net force per body
             for i, body_i in enumerate(bodies):
-                mi = body_i.GetMass()
-                pi = body_i.GetPos()
-                total_force = chrono.ChVectorD(0, 0, 0)
-                for j, body_j in enumerate(bodies):
-                    if i == j:
-                        continue
-                    dir_vec = body_j.GetPos() - pi
-                    dist_sq = dir_vec.Length2()
-                    # 1/sqrt(r² + ε²): softened inverse distance (never diverges).
-                    inv = 1.0 / math.sqrt(dist_sq + soft_sq)
-                    mj = body_j.GetMass()
-                    force_mag = g_eff * mi * mj * inv * inv
-                    total_force += dir_vec * (force_mag * inv)
-                body_i.Accumulate_force(total_force, pi, False)
+                fi = forces[i]
+                body_i.Accumulate_force(
+                    chrono.ChVectorD(float(fi[0]), float(fi[1]), float(fi[2])),
+                    body_i.GetPos(), False)
 
         sys_chrono.DoStepDynamics(phys_dt)
         sim_time += phys_dt

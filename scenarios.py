@@ -55,9 +55,15 @@ def _spawn_cloud(rng, n, cfg):
     mass = np.ones(n)
 
     lo, hi = sorted(abs(v) for v in cfg["spawn_lin_vel_range"])
-    vdir = rng.normal(size=(n, 3))
-    vdir /= np.linalg.norm(vdir, axis=1, keepdims=True) + 1e-12
-    vel = vdir * rng.uniform(lo, hi, size=n)[:, None]
+    mag = rng.uniform(lo, hi, size=n)[:, None]
+    if cfg.get("spawn_velocity_mode", "random") == "radial":
+        # Coherent outward kick (an explosion): velocity points away from center,
+        # so a bound cloud blows out then falls back instead of just puffing.
+        vdir = pos / (np.linalg.norm(pos, axis=1, keepdims=True) + 1e-12)
+    else:
+        vdir = rng.normal(size=(n, 3))
+        vdir /= np.linalg.norm(vdir, axis=1, keepdims=True) + 1e-12
+    vel = vdir * mag
     return pos, vel, radii, colors, mass
 
 
