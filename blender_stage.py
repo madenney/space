@@ -738,10 +738,39 @@ if not (scene_loaded and scene_use_camera and scene_camera):
     # with it (constant distance & angle) — matches the prior clump-dolly.
     _track_offset = _base_vec - _look_target(_f0)
 
+    # "fit": auto-framing. Distance scales with the cloud's per-frame spread so the
+    # swarm stays a consistent size in frame whether it's exploded huge or collapsed
+    # tiny. Precompute a smoothed distance per frame (cheap: reuses the positions).
+    _fit_dir = _spherical(1.0, _base_az, _base_el)  # unit viewing direction
+    _fit_by_frame = None
+    if _mode == "fit" and all_positions is not None:
+        _fit_scale = float(_move.get("fit_scale", config.get("camera_fit_scale", 3.5)))
+        _pct = float(_move.get("fit_percentile", config.get("camera_fit_percentile", 90)))
+        _min_d = float(_move.get("min_distance", config.get("camera_fit_min_distance", 8.0)))
+        _raw = np.empty(len(_seq))
+        for _i in range(len(_seq)):
+            _fn = int(_seq[_i])
+            _c = _look_target(_fn)
+            _P = all_positions[min(max(_fn, 0), frames_total - 1)]
+            _d = np.linalg.norm(_P - np.array([_c.x, _c.y, _c.z]), axis=1)
+            _raw[_i] = max(_min_d, _fit_scale * float(np.percentile(_d, _pct)))
+        # Smooth the distance over the camera window (centered, lag-free).
+        _r = int(round(CAM["smooth_seconds"] * frame_rate / 2.0))
+        if _r >= 1 and len(_raw) > 2:
+            _cs = np.concatenate([[0.0], np.cumsum(_raw)])
+            _sm = np.empty_like(_raw)
+            for _i in range(len(_raw)):
+                _a = max(0, _i - _r); _b = min(len(_raw), _i + _r + 1)
+                _sm[_i] = (_cs[_b] - _cs[_a]) / (_b - _a)
+            _raw = _sm
+        _fit_by_frame = {int(_seq[_i]): float(_raw[_i]) for _i in range(len(_seq))}
+
     def _cam_position(fnum):
         """Camera position in Chrono space for a frame, per the move mode."""
         if _mode == "static":
             return _base_vec
+        if _mode == "fit" and _fit_by_frame is not None:
+            return _look_target(fnum) + _fit_dir * _fit_by_frame.get(int(fnum), _base_radius)
         if _mode == "track":
             return _look_target(fnum) + _track_offset
         if _mode == "orbit":
@@ -821,7 +850,7 @@ if not (scene_loaded and scene_use_lights and scene_has_any_lights):
 # collide; bodies just pass through it. Skipped if one is already in the scene.
 SHOW_ORIGIN = bool(config.get("show_origin_marker", False))
 if SHOW_ORIGIN and "OriginMarker" not in bpy.data.objects:
-    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.0))
+    bpy.ops.mesh.primitive_cube_add(size=float(config.get("origin_marker_size", 1.0)), location=(0.0, 0.0, 0.0))
     _marker = bpy.context.active_object
     _marker.name = "OriginMarker"
     _mmat = bpy.data.materials.new(name="OriginMarkerMat")

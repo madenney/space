@@ -14,6 +14,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "output_root": str(PROJECT_ROOT / "output"),
     "default_quality": "low",
     "quality_presets": {
+        # Ultra-cheap "rough physics" preview: tiny res, almost no samples, low fps.
+        # Image looks rough, but it's fast — use it to judge motion/timing only.
+        "draft": {"samples": 3, "res_x": 384, "res_y": 216, "fps": 8, "hz": 15, "denoise": False, "mblur": False},
         "low": {"samples": 8, "res_x": 640, "res_y": 360, "fps": 15, "hz": 15, "denoise": False, "mblur": False},
         "high": {"samples": 128, "res_x": 1920, "res_y": 1080, "fps": 30, "hz": 30, "denoise": False, "mblur": False},
         "final": {"samples": 128, "res_x": 3840, "res_y": 2160, "fps": 60, "hz": 60, "denoise": True, "mblur": False},
@@ -69,6 +72,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "camera_smooth_seconds": 0.5,
     "camera_lens_mm": 35,
     "camera_fstop": 4.0,
+    # Auto-framing ("fit" camera move): distance = fit_scale × the radius enclosing
+    # fit_percentile% of bodies, so the swarm stays a consistent size as it expands
+    # /collapses. Lower fit_scale = tighter framing; min_distance is the zoom-in floor.
+    "camera_fit_scale": 3.5,
+    "camera_fit_percentile": 90,
+    "camera_fit_min_distance": 8.0,
     # First-class camera-move spec. None => derive from the flat keys above
     # (camera_track_cog -> "track", else "static"), preserving old behavior.
     # Set a dict to author a move; interpreted in blender_stage.py:
@@ -88,6 +97,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Drop a small static red cube at world origin (0,0,0) as a visual marker.
     # Render-only; never in the sim, so it doesn't move or collide.
     "show_origin_marker": False,
+    "origin_marker_size": 1.0,  # cube edge length; size up for large-scale scenes
     "ground_size": (40.0, 1.0, 40.0),
     "ground_center": (0.0, -0.5, 0.0),
     "obstacle_configs": [],
@@ -178,6 +188,9 @@ CAMERA_MOVE_SCHEMA = {
     "modes": [
         {"mode": "static", "label": "static (fixed)", "params": []},
         {"mode": "track", "label": "track (follow look-at)", "params": []},
+        {"mode": "fit", "label": "auto-fit (frame the whole cloud)", "params": [
+            {"key": "fit_scale", "label": "fit zoom", "step": 0.5, "default": 3.5},
+        ]},
         {"mode": "orbit", "label": "orbit (turntable)", "params": [
             {"key": "orbit_degrees", "label": "sweep°", "step": 15, "default": 360},
             {"key": "radius_to", "label": "end distance", "step": 1, "optional": True},
