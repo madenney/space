@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+import motion
 from logger import log_status
 
 
@@ -225,8 +226,15 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
         bodies.append(spawn_body(idx))
     logger.info("Spawned %d objects", len(bodies))
 
-    motion_data = {b.GetName(): [] for b in bodies}
     target_frames = int(math.ceil(duration_seconds * frame_rate))
+    n_bodies = len(bodies)
+    # Preallocate the motion-contract arrays (float32 structure-of-arrays) and fill
+    # them in place. The old path appended a 9-float list per body per frame and
+    # converted at the very end — at thousands of bodies × thousands of frames that
+    # peaked at many GB of Python list/tuple overhead and OOM-killed the process.
+    positions = np.empty((target_frames, n_bodies, 3), dtype=np.float32)
+    orientations = np.empty((target_frames, n_bodies, 4), dtype=np.float32)  # wxyz
+    times = np.empty(target_frames, dtype=np.float32)
     sample_dt = 1.0 / frame_rate
     phys_dt = 1.0 / max(1, physics_hz)
     steps_per_frame = max(1, int(math.ceil(physics_hz / frame_rate)))
@@ -289,22 +297,12 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
         steps_done += 1
         log_status(logger, f"Physics steps: {steps_done}/{total_phys_steps} | frames: {frame}/{target_frames}", overwrite=True)
         if sim_time + 1e-9 >= next_sample:
-            for body in bodies:
+            times[frame] = sys_chrono.GetChTime()
+            for i, body in enumerate(bodies):
                 pos = body.GetPos()
                 rot = body.GetRot()
-                motion_data[body.GetName()].append(
-                    [
-                        frame,
-                        sys_chrono.GetChTime(),
-                        pos.x,
-                        pos.y,
-                        pos.z,
-                        rot.e0,
-                        rot.e1,
-                        rot.e2,
-                        rot.e3,
-                    ]
-                )
+                positions[frame, i] = (pos.x, pos.y, pos.z)
+                orientations[frame, i] = (rot.e0, rot.e1, rot.e2, rot.e3)
             frame += 1
             next_sample += sample_dt
             log_status(logger, f"Physics steps: {steps_done}/{total_phys_steps} | frames: {frame}/{target_frames}", overwrite=True)
@@ -314,8 +312,14 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
     sys.stdout.write("\n")
 
     npz_path = physics_dir / "motion_data.npz"
-    np.savez(npz_path, **{k: np.array(v) for k, v in motion_data.items()})
     frames_recorded = frame
+    motion.write_motion(
+        npz_path,
+        frame_index=np.arange(frames_recorded, dtype=np.int32),
+        time=times[:frames_recorded],
+        positions=positions[:frames_recorded],
+        orientations=orientations[:frames_recorded],
+    )
     if frames_recorded != target_frames:
         logger.info("Chrono frames recorded: %d (target %d)", frames_recorded, target_frames)
     else:
