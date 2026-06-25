@@ -89,6 +89,31 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
     # Track spawn boxes to avoid initial overlaps
     spawn_extents = []
 
+    # Optional lumpy distribution: scatter bodies around a few cluster centers
+    # instead of filling the sphere uniformly. Velocities stay radial-from-origin,
+    # so the cloud still explodes outward -- but as distinct lumps that interact
+    # off-center as they fall back (a richer, more turbulent collapse). 1 = uniform.
+    def _rand_unit():
+        for _ in range(20):
+            v = (random.uniform(-1, 1), random.uniform(-1, 1), random.uniform(-1, 1))
+            n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+            if n > 1e-6:
+                return (v[0] / n, v[1] / n, v[2] / n)
+        return (1.0, 0.0, 0.0)
+
+    n_clusters = max(1, int(cfg.get("spawn_clusters", 1)))
+    cluster_centers = []
+    cluster_radius = 0.0
+    if n_clusters > 1:
+        _span = cfg["spawn_sphere_radius"] * float(cfg.get("spawn_cluster_spread", 0.6))
+        for _ in range(n_clusters):
+            _u = _rand_unit()
+            _rr = _span * (random.random() ** (1.0 / 3.0))
+            cluster_centers.append((_u[0] * _rr, _u[1] * _rr, _u[2] * _rr))
+        cluster_radius = cfg["spawn_sphere_radius"] * float(cfg.get("spawn_cluster_radius_frac", 0.22))
+        logger.info("Lumpy spawn: %d clusters, centers within %.0f, cluster radius %.1f",
+                    n_clusters, _span, cluster_radius)
+
     def spawn_body(idx: int):
         shapes = list(cfg["shape_weights"].keys())
         weights = list(cfg["shape_weights"].values())
@@ -172,10 +197,16 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
         pos_tuple = (0.0, 0.0, 0.0)
         max_extent = max(ext)
         spawn_radius = max(cfg["spawn_sphere_radius"] - max_extent, 0.1)
+        _cc = random.choice(cluster_centers) if cluster_centers else None
         while attempt < max_attempts:
-            r = spawn_radius * (random.random() ** (1.0 / 3.0))
-            dir_vec = random_dir()
-            pos_tuple = (dir_vec[0] * r, dir_vec[1] * r, dir_vec[2] * r)
+            if _cc is not None:
+                rr = cluster_radius * (random.random() ** (1.0 / 3.0))
+                dd = random_dir()
+                pos_tuple = (_cc[0] + dd[0] * rr, _cc[1] + dd[1] * rr, _cc[2] + dd[2] * rr)
+            else:
+                r = spawn_radius * (random.random() ** (1.0 / 3.0))
+                dir_vec = random_dir()
+                pos_tuple = (dir_vec[0] * r, dir_vec[1] * r, dir_vec[2] * r)
             if not overlaps(pos_tuple, ext):
                 break
             attempt += 1

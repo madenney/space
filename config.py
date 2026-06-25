@@ -62,6 +62,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "reference_env_checks": 24.0,   # checker squares per box edge
     "body_density": 1000.0,
     "spawn_sphere_radius": 20.0,
+    # Lumpy spawn: scatter bodies around this many cluster centers instead of
+    # filling the sphere evenly (1 = uniform). Velocities stay radial, so it still
+    # explodes -- but as distinct lumps that collide off-center on the way back in.
+    "spawn_clusters": 1,
+    "spawn_cluster_spread": 0.6,        # how far cluster centers spread (frac of spawn radius)
+    "spawn_cluster_radius_frac": 0.22,  # size of each lump (frac of spawn radius)
     # Speed MAGNITUDE band (direction randomized). [2,5] balances against
     # gravity ~500 for a bound, churning swarm rather than a fly-apart cloud.
     "spawn_lin_vel_range": (2, 5),
