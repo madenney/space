@@ -53,6 +53,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # degenerate high-speed contact slingshotting a body to escape speed and then
     # blowing the whole sim to NaN through the all-pairs gravity sum.
     "max_body_speed": 0.0,
+    # Static checkered enclosure (camera-ray only) to make camera motion legible.
+    "reference_env": False,
+    "reference_env_size": 500.0,    # half-extent of the box (must contain the action + camera)
+    "reference_env_checks": 24.0,   # checker squares per box edge
     "body_density": 1000.0,
     "spawn_sphere_radius": 20.0,
     # Speed MAGNITUDE band (direction randomized). [2,5] balances against

@@ -823,6 +823,43 @@ if env_path_str and not scene_prepped:
     else:
         print(f"Environment path not found: {env_path}")
 
+
+def build_reference_env(scene):
+    """A large static checkered enclosure so camera motion is legible: the fixed
+    pattern gives parallax (translation) and sweep (rotation) the eye can read.
+    Camera-ray only via a Light Path gate, so it shows to the camera but emits no
+    light and casts no shadow -- the scene's actual lighting is untouched."""
+    half = float(config.get("reference_env_size", 500.0))
+    checks = float(config.get("reference_env_checks", 24.0))
+    bpy.ops.mesh.primitive_cube_add(size=2.0 * half)
+    box = bpy.context.active_object
+    box.name = "reference_env"
+    mat = bpy.data.materials.new("ReferenceChecker")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nodes, links = nt.nodes, nt.links
+    nodes.clear()
+    tc = nodes.new("ShaderNodeTexCoord")
+    chk = nodes.new("ShaderNodeTexChecker")
+    chk.inputs["Scale"].default_value = checks
+    chk.inputs["Color1"].default_value = (0.03, 0.04, 0.06, 1.0)   # dark slate
+    chk.inputs["Color2"].default_value = (0.30, 0.32, 0.38, 1.0)   # light slate
+    emis = nodes.new("ShaderNodeEmission")
+    links.new(chk.outputs["Color"], emis.inputs["Color"])
+    links.new(tc.outputs["Generated"], chk.inputs["Vector"])      # 0..1 over bbox -> `checks` squares/edge
+    trans = nodes.new("ShaderNodeBsdfTransparent")
+    lp = nodes.new("ShaderNodeLightPath")
+    mix = nodes.new("ShaderNodeMixShader")
+    links.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])     # camera -> emission, else transparent
+    links.new(trans.outputs["BSDF"], mix.inputs[1])
+    links.new(emis.outputs["Emission"], mix.inputs[2])
+    out = nodes.new("ShaderNodeOutputMaterial")
+    links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    box.data.materials.append(mat)
+    box.visible_shadow = False
+    print(f"Reference environment: checkered box half-extent {half:.0f}, {checks:.0f} checks/edge", flush=True)
+
+
 # World background
 world = bpy.context.scene.world
 if env_world:
@@ -851,6 +888,10 @@ else:
 for col in env_collections:
     if col.name not in bpy.context.scene.collection.children.keys():
         bpy.context.scene.collection.children.link(col)
+
+# Optional static reference grid so camera motion is readable.
+if config.get("reference_env"):
+    build_reference_env(bpy.context.scene)
 
 scene_camera = None
 if scene_loaded and scene_use_camera:
