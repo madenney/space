@@ -222,7 +222,28 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
                 # the center, so a bound cloud blows out then falls back.
                 px, py, pz = pos_tuple
                 pn = math.sqrt(px * px + py * py + pz * pz) or 1.0
-                ldir = (px / pn, py / pn, pz / pn)
+                rhat = (px / pn, py / pn, pz / pn)
+                # Optional swirl: blend a COHERENT tangential component (axis x r̂,
+                # same rotational sense for every body) into the radial kick. That
+                # injects net angular momentum, so the collapse spins up (the
+                # figure-skater effect amplifies even a slight swirl). 0 = pure radial.
+                f = float(cfg.get("spin_fraction", 0.0))
+                ax = cfg.get("spin_axis", (0.0, 1.0, 0.0))
+                an = math.sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]) or 1.0
+                ax = (ax[0] / an, ax[1] / an, ax[2] / an)
+                tx = ax[1] * rhat[2] - ax[2] * rhat[1]   # tangential = axis x r̂
+                ty = ax[2] * rhat[0] - ax[0] * rhat[2]
+                tz = ax[0] * rhat[1] - ax[1] * rhat[0]
+                tn = math.sqrt(tx * tx + ty * ty + tz * tz)
+                if f > 0.0 and tn > 1e-6:
+                    that = (tx / tn, ty / tn, tz / tn)
+                    bx = (1.0 - f) * rhat[0] + f * that[0]
+                    by = (1.0 - f) * rhat[1] + f * that[1]
+                    bz = (1.0 - f) * rhat[2] + f * that[2]
+                    bn = math.sqrt(bx * bx + by * by + bz * bz) or 1.0
+                    ldir = (bx / bn, by / bn, bz / bn)
+                else:
+                    ldir = rhat
             else:
                 ldir = random_dir()
             lmag = random.uniform(lin_low, lin_high)

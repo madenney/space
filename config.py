@@ -65,6 +65,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Lumpy spawn: scatter bodies around this many cluster centers instead of
     # filling the sphere evenly (1 = uniform). Velocities stay radial, so it still
     # explodes -- but as distinct lumps that collide off-center on the way back in.
+    # Swirl: blend a coherent tangential component into the radial launch so the
+    # cloud starts with net angular momentum and the collapse spins up. 0 = pure
+    # radial (no spin); ~0.15 = slight swirl; ~1 = nearly orbital. spin_axis is the
+    # rotation axis (sim Y-up by default).
+    "spin_fraction": 0.0,
+    "spin_axis": (0.0, 1.0, 0.0),
     "spawn_clusters": 1,
     "spawn_cluster_spread": 0.6,        # how far cluster centers spread (frac of spawn radius)
     "spawn_cluster_radius_frac": 0.22,  # size of each lump (frac of spawn radius)
