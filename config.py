@@ -54,6 +54,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # blowing the whole sim to NaN through the all-pairs gravity sum.
     "max_body_speed": 0.0,
     # Static checkered enclosure (camera-ray only) to make camera motion legible.
+    # Push-in: floor the framing radius at this fraction of its peak so the camera
+    # stops diving once the clump condenses (otherwise it burrows into the core).
+    "camera_pushin_radius_floor": 0.3,
     "reference_env": False,
     "reference_env_size": 500.0,    # half-extent of the box (must contain the action + camera)
     "reference_env_checks": 24.0,   # checker squares per box edge

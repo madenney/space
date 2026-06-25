@@ -977,7 +977,18 @@ if not (scene_loaded and scene_use_camera and scene_camera):
                   f"(radius {_radii[_peak]:.0f}); framing x{_wide} -> x{_close}", flush=True)
         # fit frames everything (percentile); pushin frames the dense bulk (median)
         # so the dive-in lands tight on the clump, letting escapees drift off-frame.
-        _frame_r = _radii if _mode == "fit" else _bulk
+        if _mode == "fit":
+            _frame_r = _radii
+        else:
+            # Freeze the dive: as the clump condenses the median collapses toward 0,
+            # which would pull the camera right inside it. Floor the framing radius at
+            # a fraction of its peak so the push-in stops at a clump-sized framing and
+            # holds there instead of burrowing into the core.
+            _floor_frac = float(_move.get("radius_floor",
+                                          config.get("camera_pushin_radius_floor", 0.3)))
+            _frame_r = np.maximum(_bulk, _bulk[_peak] * _floor_frac)
+            print(f"Push-in radius floor: {_floor_frac:.2f} x peak bulk "
+                  f"{_bulk[_peak]:.0f} = {_bulk[_peak] * _floor_frac:.0f} units", flush=True)
         _raw = np.maximum(_min_d, _scales * _frame_r)
         # Smooth the distance over the camera window (centered, lag-free).
         _r = int(round(CAM["smooth_seconds"] * frame_rate / 2.0))
