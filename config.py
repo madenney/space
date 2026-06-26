@@ -57,6 +57,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Push-in: floor the framing radius at this fraction of its peak so the camera
     # stops diving once the clump condenses (otherwise it burrows into the core).
     "camera_pushin_radius_floor": 0.3,
+    # Camera framing ignores the farthest (1 - this) fraction of bodies as outliers
+    # (escapees/slingshots), so a few far-flung bodies don't blow the shot wide.
+    "camera_outlier_keep": 0.95,
     "reference_env": False,
     "reference_env_size": 500.0,    # half-extent of the box (must contain the action + camera)
     "reference_env_checks": 24.0,   # checker squares per box edge

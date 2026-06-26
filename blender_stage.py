@@ -949,13 +949,17 @@ if not (scene_loaded and scene_use_camera and scene_camera):
         # Per-frame cloud radius: a framing radius (percentile, to frame most bodies)
         # and a robust bulk radius (median) used for peak detection — the median
         # ignores escapees that keep flying out after the bulk has turned around.
+        # Drop the farthest few % of bodies as outliers (escapees/slingshots) before
+        # sizing the shot, so a couple of far-flung bodies can't blow the framing wide.
+        _keep = float(_move.get("outlier_keep", config.get("camera_outlier_keep", 0.95)))
         _radii = np.empty(len(_seq))
         _bulk = np.empty(len(_seq))
         for _i in range(len(_seq)):
             _fn = int(_seq[_i])
             _c = _look_target(_fn)
             _P = all_positions[min(max(_fn, 0), frames_total - 1)]
-            _d = np.linalg.norm(_P - np.array([_c.x, _c.y, _c.z]), axis=1)
+            _d = np.sort(np.linalg.norm(_P - np.array([_c.x, _c.y, _c.z]), axis=1))
+            _d = _d[:max(5, int(len(_d) * _keep))]   # keep the inner `_keep`, drop escapees
             _radii[_i] = float(np.percentile(_d, _pct))
             _bulk[_i] = float(np.median(_d))
         _wide = float(_move.get("fit_scale", config.get("camera_fit_scale", 3.5)))
