@@ -994,6 +994,12 @@ if not (scene_loaded and scene_use_camera and scene_camera):
             print(f"Push-in radius floor: {_floor_frac:.2f} x peak bulk "
                   f"{_bulk[_peak]:.0f} = {_bulk[_peak] * _floor_frac:.0f} units", flush=True)
         _raw = np.maximum(_min_d, _scales * _frame_r)
+        if _mode == "pushin":
+            # Start at the furthest framing (peak expansion) and HOLD it through the
+            # blast instead of pulling back as the cloud grows -- the camera never
+            # zooms out; the explosion grows into frame, and it only dives in once
+            # the cloud collapses. (Precomputed: we know the peak distance up front.)
+            _raw[:_peak + 1] = float(np.max(_raw[:_peak + 1]))
         # Smooth the distance over the camera window (centered, lag-free).
         _r = int(round(CAM["smooth_seconds"] * frame_rate / 2.0))
         if _r >= 1 and len(_raw) > 2:
