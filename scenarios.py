@@ -34,6 +34,12 @@ import motion
 from logger import log_status
 from physics import run_chrono_sim
 
+try:
+    from barnes_hut import bh_accel   # O(N log N) tree gravity (needs numba)
+    _HAS_BH = True
+except Exception:
+    _HAS_BH = False
+
 _PALETTE = np.array([
     (0.90, 0.20, 0.20), (0.20, 0.55, 0.95), (0.25, 0.85, 0.35),
     (0.95, 0.80, 0.20), (0.65, 0.30, 0.90), (0.20, 0.85, 0.75),
@@ -117,12 +123,25 @@ def run_gravity_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: 
     g_eff = cfg["gravity_const"] / total_mass
     soft2 = float(cfg.get("gravity_softening", 1.0)) ** 2
 
-    def accel(p):
-        diff = p[None, :, :] - p[:, None, :]
-        r2 = (diff * diff).sum(-1) + soft2
-        inv_r3 = r2 ** -1.5
-        np.fill_diagonal(inv_r3, 0.0)
-        return g_eff * ((mass[None, :] * inv_r3)[:, :, None] * diff).sum(axis=1)
+    # Collisionless gravity scales to tens of thousands with Barnes-Hut (O(N log N))
+    # since there's no contact solver — the tree is the only thing left to make fast.
+    soft_len = math.sqrt(soft2)
+    bh_theta = float(cfg.get("bh_theta", 0.5))
+    _solver = cfg.get("gravity_solver", "auto")
+    use_tree = _HAS_BH and (_solver == "tree" or (_solver == "auto" and n >= 2500))
+    logger.info("Gravity solver: %s",
+                f"Barnes-Hut tree (theta={bh_theta})" if use_tree else "exact O(N^2)")
+
+    if use_tree:
+        def accel(p):
+            return g_eff * bh_accel(p, mass, soft_len, bh_theta)
+    else:
+        def accel(p):
+            diff = p[None, :, :] - p[:, None, :]
+            r2 = (diff * diff).sum(-1) + soft2
+            inv_r3 = r2 ** -1.5
+            np.fill_diagonal(inv_r3, 0.0)
+            return g_eff * ((mass[None, :] * inv_r3)[:, :, None] * diff).sum(axis=1)
 
     dt = 1.0 / max(1, physics_hz)
     steps_per_frame = max(1, int(math.ceil(physics_hz / frame_rate)))
