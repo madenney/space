@@ -7,14 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
+import gravity
 import motion
 from logger import log_status
-
-try:
-    from barnes_hut import bh_accel   # O(N log N) tree gravity (needs numba)
-    _HAS_BH = True
-except Exception:
-    _HAS_BH = False
 
 
 def generate_random_euler(low: float = -1.0, high: float = 1.0):
@@ -332,14 +327,11 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
     # the quadratic sum the bottleneck. Contacts are identical either way.
     soft_len = math.sqrt(soft_sq)
     bh_theta = float(cfg.get("bh_theta", 0.5))
-    _solver = cfg.get("gravity_solver", "auto")
-    use_tree = _HAS_BH and (_solver == "tree" or (_solver == "auto" and len(bodies) >= 2500))
-    if _solver == "tree" and not _HAS_BH:
+    solver = cfg.get("gravity_solver", "auto")
+    if solver == "tree" and not gravity.HAS_BH:
         logger.warning("gravity_solver=tree but barnes_hut/numba unavailable; using exact O(N^2).")
     if gravity_on:
-        logger.info("Gravity solver: %s%s",
-                    "Barnes-Hut tree" if use_tree else "exact O(N^2)",
-                    f" (theta={bh_theta})" if use_tree else "")
+        logger.info("Gravity solver: %s", gravity.describe(solver, len(bodies), bh_theta))
     log_status(logger, f"Physics steps: 0/{total_phys_steps} | frames: 0/{target_frames}", overwrite=True)
     while frame < target_frames:
         if gravity_on:
@@ -357,15 +349,11 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
             # (one C-level pass) instead of a per-pair interpreter loop. The
             # contact solver below (DoStepDynamics) is untouched.
             pos_np = np.array([(p.x, p.y, p.z) for p in (b.GetPos() for b in bodies)])
-            if use_tree:
-                # Barnes-Hut: a_i = Σ_j m_j (r_j-r_i)/(r²+ε²)^1.5 (G=1); force = g_eff·mᵢ·aᵢ
-                forces = g_eff * masses_np[:, None] * bh_accel(pos_np, masses_np, soft_len, bh_theta)
-            else:
-                diff = pos_np[None, :, :] - pos_np[:, None, :]        # (N,N,3) r_j - r_i
-                inv = (np.square(diff).sum(-1) + soft_sq) ** -1.5     # (N,N) 1/(r²+ε²)^1.5
-                np.fill_diagonal(inv, 0.0)                            # no self-force
-                w = (g_eff * masses_np[:, None] * masses_np[None, :] * inv)[:, :, None]
-                forces = (w * diff).sum(axis=1)                       # (N,3) net force per body
+            # Long-range gravity via the shared kernel (exact or Barnes-Hut). The
+            # kernel returns the G=1 acceleration a_i; force_i = g_eff·m_i·a_i. The
+            # contact solver below (DoStepDynamics) is untouched.
+            a = gravity.gravity_accel(pos_np, masses_np, soft_len, solver, bh_theta)
+            forces = g_eff * masses_np[:, None] * a
             # Backstop: scrub any non-finite force so a single bad body can't
             # poison every other body through the sum above on the next step.
             np.nan_to_num(forces, copy=False, nan=0.0, posinf=0.0, neginf=0.0)

@@ -30,15 +30,10 @@ from pathlib import Path
 
 import numpy as np
 
+import gravity
 import motion
 from logger import log_status
 from physics import run_chrono_sim
-
-try:
-    from barnes_hut import bh_accel   # O(N log N) tree gravity (needs numba)
-    _HAS_BH = True
-except Exception:
-    _HAS_BH = False
 
 _PALETTE = np.array([
     (0.90, 0.20, 0.20), (0.20, 0.55, 0.95), (0.25, 0.85, 0.35),
@@ -133,27 +128,15 @@ def run_gravity_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: 
 
     total_mass = float(mass.sum()) or 1.0
     g_eff = cfg["gravity_const"] / total_mass
-    soft2 = float(cfg.get("gravity_softening", 1.0)) ** 2
-
+    soft = float(cfg.get("gravity_softening", 1.0))
+    solver = cfg.get("gravity_solver", "auto")
+    theta = float(cfg.get("bh_theta", 0.5))
     # Collisionless gravity scales to tens of thousands with Barnes-Hut (O(N log N))
     # since there's no contact solver — the tree is the only thing left to make fast.
-    soft_len = math.sqrt(soft2)
-    bh_theta = float(cfg.get("bh_theta", 0.5))
-    _solver = cfg.get("gravity_solver", "auto")
-    use_tree = _HAS_BH and (_solver == "tree" or (_solver == "auto" and n >= 2500))
-    logger.info("Gravity solver: %s",
-                f"Barnes-Hut tree (theta={bh_theta})" if use_tree else "exact O(N^2)")
+    logger.info("Gravity solver: %s", gravity.describe(solver, n, theta))
 
-    if use_tree:
-        def accel(p):
-            return g_eff * bh_accel(p, mass, soft_len, bh_theta)
-    else:
-        def accel(p):
-            diff = p[None, :, :] - p[:, None, :]
-            r2 = (diff * diff).sum(-1) + soft2
-            inv_r3 = r2 ** -1.5
-            np.fill_diagonal(inv_r3, 0.0)
-            return g_eff * ((mass[None, :] * inv_r3)[:, :, None] * diff).sum(axis=1)
+    def accel(p):
+        return g_eff * gravity.gravity_accel(p, mass, soft, solver, theta)
 
     dt = 1.0 / max(1, physics_hz)
     steps_per_frame = max(1, int(math.ceil(physics_hz / frame_rate)))
@@ -195,19 +178,22 @@ def run_collide_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: 
 
     total_mass = float(mass.sum()) or 1.0
     g_eff = cfg["gravity_const"] / total_mass
-    soft2 = float(cfg.get("gravity_softening", 1.0)) ** 2
+    soft = float(cfg.get("gravity_softening", 1.0))
+    solver = cfg.get("gravity_solver", "auto")
+    theta = float(cfg.get("bh_theta", 0.5))
     k_contact = float(cfg.get("collision_stiffness", 20000.0))   # spring: higher = less overlap
     gamma = float(cfg.get("collision_damping", 30.0))            # dashpot: higher = less bouncy
     inv_mass = (1.0 / mass)[:, None]
+    logger.info("Gravity solver: %s", gravity.describe(solver, n, theta))
 
     def accel(p, v):
+        # Long-range gravity via the shared kernel (exact or Barnes-Hut).
+        a = g_eff * gravity.gravity_accel(p, mass, soft, solver, theta)
+        # Soft-sphere contact needs every pairwise separation, so it builds its own
+        # dense (N,N) arrays. This term — not gravity — is what caps the collide
+        # scenario's body count (no neighbor grid yet), even when gravity uses the tree.
         diff = p[None, :, :] - p[:, None, :]          # r_j - r_i
-        r2 = (diff * diff).sum(-1)
-        dist = np.sqrt(r2 + 1e-12)
-        # Gravity (softened), reusing diff.
-        inv_r3 = (r2 + soft2) ** -1.5
-        np.fill_diagonal(inv_r3, 0.0)
-        a = g_eff * ((mass[None, :] * inv_r3)[:, :, None] * diff).sum(axis=1)
+        dist = np.sqrt((diff * diff).sum(-1) + 1e-12)
         # Soft-sphere contact: repulsive spring + damping where shells overlap.
         sumr = radii[:, None] + radii[None, :]
         overlap = sumr - dist                          # > 0 => colliding
