@@ -65,7 +65,19 @@ def _spawn_cloud(rng, n, cfg):
     if cfg.get("spawn_velocity_mode", "random") == "radial":
         # Coherent outward kick (an explosion): velocity points away from center,
         # so a bound cloud blows out then falls back instead of just puffing.
-        vdir = pos / (np.linalg.norm(pos, axis=1, keepdims=True) + 1e-12)
+        rhat = pos / (np.linalg.norm(pos, axis=1, keepdims=True) + 1e-12)
+        f = float(cfg.get("spin_fraction", 0.0))
+        if f > 0.0:
+            # Blend a coherent tangential swirl (axis x r-hat) for net angular
+            # momentum -> the collapse spins up into a disk. Same knob as rigid.
+            ax = np.asarray(cfg.get("spin_axis", (0.0, 1.0, 0.0)), dtype=float)
+            ax /= np.linalg.norm(ax) + 1e-12
+            tang = np.cross(ax[None, :], rhat)
+            tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-12
+            vdir = (1.0 - f) * rhat + f * tang
+            vdir /= np.linalg.norm(vdir, axis=1, keepdims=True) + 1e-12
+        else:
+            vdir = rhat
     else:
         vdir = rng.normal(size=(n, 3))
         vdir /= np.linalg.norm(vdir, axis=1, keepdims=True) + 1e-12
