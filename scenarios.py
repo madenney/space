@@ -30,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
+import contacts
 import gravity
 import motion
 from logger import log_status
@@ -55,28 +56,72 @@ def _spawn_cloud(rng, n, cfg):
     colors = _PALETTE[rng.integers(0, len(_PALETTE), size=n)]
     mass = np.ones(n)
 
+    # If a dominant central seed will occupy the origin, keep cloud bodies OUT of
+    # its volume. With collisions an initial overlap detonates the sim — but bodies
+    # also must not be piled onto the seed's surface in a thin shell, or they
+    # overlap each OTHER there and the contact solver squirts some back into the
+    # seed, kicking it off-centre. So re-scatter each offender to a fresh random
+    # spot in the clear shell (random direction, volume-uniform radius), redrawing
+    # a few times until clear. Done BEFORE velocities so each launch stays radial.
+    cm = float(cfg.get("central_mass", 0.0))
+    c_radius = float(cfg.get("central_radius", 5.0))
+    if cm > 0.0:
+        clear = c_radius + radii + 0.5
+        inside = np.where(np.linalg.norm(pos, axis=1) < clear)[0]
+        for _ in range(4):
+            if inside.size == 0:
+                break
+            ndir = rng.normal(size=(inside.size, 3))
+            ndir /= np.linalg.norm(ndir, axis=1, keepdims=True) + 1e-12
+            lo_r = np.minimum(clear[inside], radius)
+            u = rng.random(inside.size)
+            nr = (lo_r ** 3 + u * (radius ** 3 - lo_r ** 3)) ** (1.0 / 3.0)
+            pos[inside] = ndir * nr[:, None]
+            inside = np.where(np.linalg.norm(pos, axis=1) < clear)[0]
+
     lo, hi = sorted(abs(v) for v in cfg["spawn_lin_vel_range"])
     mag = rng.uniform(lo, hi, size=n)[:, None]
     if cfg.get("spawn_velocity_mode", "random") == "radial":
         # Coherent outward kick (an explosion): velocity points away from center,
         # so a bound cloud blows out then falls back instead of just puffing.
         rhat = pos / (np.linalg.norm(pos, axis=1, keepdims=True) + 1e-12)
+        swirl = float(cfg.get("swirl_speed", 0.0))
         f = float(cfg.get("spin_fraction", 0.0))
-        if f > 0.0:
-            # Blend a coherent tangential swirl (axis x r-hat) for net angular
-            # momentum -> the collapse spins up into a disk. Same knob as rigid.
+        if swirl > 0.0 or f > 0.0:
+            # Tangential direction (axis x r-hat): the coherent swirl, same sense
+            # for every body, which injects net angular momentum.
             ax = np.asarray(cfg.get("spin_axis", (0.0, 1.0, 0.0)), dtype=float)
             ax /= np.linalg.norm(ax) + 1e-12
             tang = np.cross(ax[None, :], rhat)
             tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-12
+        if swirl > 0.0:
+            # Decoupled swirl (preferred): the FULL outward kick PLUS an independent
+            # tangential speed on top. Explosion strength and spin no longer trade
+            # against each other -> the balls fly away AND rotate.
+            vel = rhat * mag + tang * swirl
+        elif f > 0.0:
+            # Legacy blend: spin_fraction steals from the outward kick to pay for
+            # tangential, so high spin cancels the explosion. Kept for old configs.
             vdir = (1.0 - f) * rhat + f * tang
             vdir /= np.linalg.norm(vdir, axis=1, keepdims=True) + 1e-12
+            vel = vdir * mag
         else:
-            vdir = rhat
+            vel = rhat * mag
     else:
         vdir = rng.normal(size=(n, 3))
         vdir /= np.linalg.norm(vdir, axis=1, keepdims=True) + 1e-12
-    vel = vdir * mag
+        vel = vdir * mag
+
+    if cm > 0.0:
+        # Inject the dominant central seed at index 0: heavy, large, at the origin
+        # with zero velocity. Its volume was cleared above, so the cloud explodes
+        # radially around it and it sits at the bottom of the potential well.
+        c_color = np.asarray(cfg.get("central_color", (1.0, 0.85, 0.3)), dtype=float)
+        pos = np.vstack(([0.0, 0.0, 0.0], pos))
+        vel = np.vstack(([0.0, 0.0, 0.0], vel))
+        radii = np.concatenate(([c_radius], radii))
+        colors = np.vstack((c_color, colors))
+        mass = np.concatenate(([cm], mass))
     return pos, vel, radii, colors, mass
 
 
@@ -113,8 +158,8 @@ def _setup(run_dir, logger, cfg, label):
     rng = np.random.default_rng(seed)
     n = int(os.getenv("BODY_COUNT", cfg["default_body_count"]))
     logger.info("=== Physics (%s, vectorized) === (seed=%s, N=%d)", label, seed, n)
-    if n > 4000:
-        logger.info("N=%d is large; the O(N^2) arrays are ~%.0f MB/step.", n, (n * n * 3 * 8) / 1e6)
+    if n >= 2500:
+        logger.info("N=%d: gravity uses the Barnes-Hut tree; contacts (collide) use the O(N) grid.", n)
     return seed, rng, n
 
 
@@ -125,6 +170,7 @@ def run_gravity_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: 
     cfg = config
     seed, rng, n = _setup(run_dir, logger, cfg, "gravity")
     pos, vel, radii, colors, mass = _spawn_cloud(rng, n, cfg)
+    n = pos.shape[0]   # may include an injected central seed body
 
     total_mass = float(mass.sum()) or 1.0
     g_eff = cfg["gravity_const"] / total_mass
@@ -175,6 +221,7 @@ def run_collide_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: 
     cfg = config
     seed, rng, n = _setup(run_dir, logger, cfg, "collide")
     pos, vel, radii, colors, mass = _spawn_cloud(rng, n, cfg)
+    n = pos.shape[0]   # may include an injected central seed body
 
     total_mass = float(mass.sum()) or 1.0
     g_eff = cfg["gravity_const"] / total_mass
@@ -183,27 +230,16 @@ def run_collide_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: 
     theta = float(cfg.get("bh_theta", 0.5))
     k_contact = float(cfg.get("collision_stiffness", 20000.0))   # spring: higher = less overlap
     gamma = float(cfg.get("collision_damping", 30.0))            # dashpot: higher = less bouncy
-    inv_mass = (1.0 / mass)[:, None]
-    logger.info("Gravity solver: %s", gravity.describe(solver, n, theta))
+    inv_mass = 1.0 / mass
+    logger.info("Gravity solver: %s | contacts: O(N) spatial grid", gravity.describe(solver, n, theta))
 
     def accel(p, v):
         # Long-range gravity via the shared kernel (exact or Barnes-Hut).
         a = g_eff * gravity.gravity_accel(p, mass, soft, solver, theta)
-        # Soft-sphere contact needs every pairwise separation, so it builds its own
-        # dense (N,N) arrays. This term — not gravity — is what caps the collide
-        # scenario's body count (no neighbor grid yet), even when gravity uses the tree.
-        diff = p[None, :, :] - p[:, None, :]          # r_j - r_i
-        dist = np.sqrt((diff * diff).sum(-1) + 1e-12)
-        # Soft-sphere contact: repulsive spring + damping where shells overlap.
-        sumr = radii[:, None] + radii[None, :]
-        overlap = sumr - dist                          # > 0 => colliding
-        colliding = overlap > 0
-        np.fill_diagonal(colliding, False)
-        if colliding.any():
-            normal = -diff / dist[:, :, None]          # unit from j toward i
-            vrel_n = ((v[:, None, :] - v[None, :, :]) * normal).sum(-1)  # >0 separating
-            fmag = np.where(colliding, np.maximum(k_contact * overlap - gamma * vrel_n, 0.0), 0.0)
-            a = a + (fmag[:, :, None] * normal).sum(axis=1) * inv_mass
+        # Soft-sphere contacts via the O(N) spatial grid (contacts.py): only nearby
+        # pairs are tested, so this scales to many thousands. The old dense all-pairs
+        # version built an (N,N,3) array per step and capped the scenario at ~1-2k.
+        a = a + contacts.contact_accel(p, v, radii, inv_mass, k_contact, gamma)
         return a
 
     # Contact stiffness needs a small dt; run physics at >= 240 Hz regardless of fps.

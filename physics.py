@@ -218,16 +218,16 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
         lin_low, lin_high = sorted(abs(v) for v in cfg["spawn_lin_vel_range"])
         ang_low, ang_high = sorted(abs(v) for v in cfg["spawn_ang_vel_range"])
         if lin_high > 0:
+            lmag = random.uniform(lin_low, lin_high)
             if cfg.get("spawn_velocity_mode", "random") == "radial":
                 # Coherent outward kick (an explosion): velocity points away from
                 # the center, so a bound cloud blows out then falls back.
                 px, py, pz = pos_tuple
                 pn = math.sqrt(px * px + py * py + pz * pz) or 1.0
                 rhat = (px / pn, py / pn, pz / pn)
-                # Optional swirl: blend a COHERENT tangential component (axis x r̂,
-                # same rotational sense for every body) into the radial kick. That
-                # injects net angular momentum, so the collapse spins up (the
-                # figure-skater effect amplifies even a slight swirl). 0 = pure radial.
+                # Coherent tangential direction (axis x r̂, same rotational sense for
+                # every body) -> injects net angular momentum, so the cloud spins up.
+                swirl = float(cfg.get("swirl_speed", 0.0))
                 f = float(cfg.get("spin_fraction", 0.0))
                 ax = cfg.get("spin_axis", (0.0, 1.0, 0.0))
                 an = math.sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]) or 1.0
@@ -235,20 +235,27 @@ def run_chrono_sim(run_dir: Path, logger, duration_seconds: float, frame_rate: i
                 tx = ax[1] * rhat[2] - ax[2] * rhat[1]   # tangential = axis x r̂
                 ty = ax[2] * rhat[0] - ax[0] * rhat[2]
                 tz = ax[0] * rhat[1] - ax[1] * rhat[0]
-                tn = math.sqrt(tx * tx + ty * ty + tz * tz)
-                if f > 0.0 and tn > 1e-6:
-                    that = (tx / tn, ty / tn, tz / tn)
+                tn = math.sqrt(tx * tx + ty * ty + tz * tz) or 1.0
+                that = (tx / tn, ty / tn, tz / tn)
+                if swirl > 0.0:
+                    # Decoupled swirl (preferred): full outward kick + an independent
+                    # tangential speed on top -> bodies fly away AND rotate.
+                    lvel = (rhat[0] * lmag + that[0] * swirl,
+                            rhat[1] * lmag + that[1] * swirl,
+                            rhat[2] * lmag + that[2] * swirl)
+                elif f > 0.0:
+                    # Legacy blend: spin_fraction steals from the outward kick.
                     bx = (1.0 - f) * rhat[0] + f * that[0]
                     by = (1.0 - f) * rhat[1] + f * that[1]
                     bz = (1.0 - f) * rhat[2] + f * that[2]
                     bn = math.sqrt(bx * bx + by * by + bz * bz) or 1.0
-                    ldir = (bx / bn, by / bn, bz / bn)
+                    lvel = (bx / bn * lmag, by / bn * lmag, bz / bn * lmag)
                 else:
-                    ldir = rhat
+                    lvel = (rhat[0] * lmag, rhat[1] * lmag, rhat[2] * lmag)
             else:
-                ldir = random_dir()
-            lmag = random.uniform(lin_low, lin_high)
-            body.SetPos_dt(chrono.ChVectorD(ldir[0] * lmag, ldir[1] * lmag, ldir[2] * lmag))
+                ld = random_dir()
+                lvel = (ld[0] * lmag, ld[1] * lmag, ld[2] * lmag)
+            body.SetPos_dt(chrono.ChVectorD(*lvel))
         else:
             body.SetPos_dt(chrono.ChVectorD(0, 0, 0))
         if ang_high > 0:

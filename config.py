@@ -73,15 +73,28 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Lumpy spawn: scatter bodies around this many cluster centers instead of
     # filling the sphere evenly (1 = uniform). Velocities stay radial, so it still
     # explodes -- but as distinct lumps that collide off-center on the way back in.
-    # Swirl: blend a coherent tangential component into the radial launch so the
-    # cloud starts with net angular momentum and the collapse spins up. 0 = pure
-    # radial (no spin); ~0.15 = slight swirl; ~1 = nearly orbital. spin_axis is the
-    # rotation axis (sim Y-up by default).
+    # Swirl: inject a coherent tangential launch (axis x r̂) so the cloud starts
+    # with net angular momentum and spins up as it collapses. TWO ways to set it:
+    #   swirl_speed (preferred): an absolute tangential speed ADDED on top of the
+    #     full outward kick. Explosion and spin are independent -> balls fly away
+    #     AND rotate. Compare to spawn_lin_vel_range: equal = 45deg launch.
+    #   spin_fraction (legacy): BLENDS tangential into the radial direction, so it
+    #     steals from the outward kick (high spin cancels the explosion). 0..1.
+    # Set swirl_speed for new work; spin_fraction is kept for old configs. spin_axis
+    # is the rotation axis (sim Y-up by default). swirl_speed > 0 wins if both set.
+    "swirl_speed": 0.0,
     "spin_fraction": 0.0,
     "spin_axis": (0.0, 1.0, 0.0),
     "spawn_clusters": 1,
     "spawn_cluster_spread": 0.6,        # how far cluster centers spread (frac of spawn radius)
     "spawn_cluster_radius_frac": 0.22,  # size of each lump (frac of spawn radius)
+    # Optional dominant central body: one heavy, large, stationary seed spawned at
+    # the origin with zero velocity — a proto-"sun" for the exploding cloud to fall
+    # back onto / swing around. Being the heaviest, it sinks to the centre of the
+    # potential well. mass is in the same unit as a cloud body (each = 1). 0 = off.
+    "central_mass": 0.0,
+    "central_radius": 5.0,
+    "central_color": (1.0, 0.85, 0.3),
     # Speed MAGNITUDE band (direction randomized). [2,5] balances against
     # gravity ~500 for a bound, churning swarm rather than a fly-apart cloud.
     "spawn_lin_vel_range": (2, 5),
